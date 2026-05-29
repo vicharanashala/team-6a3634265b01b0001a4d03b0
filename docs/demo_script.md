@@ -1,0 +1,20 @@
+# Crowd-Sourced FAQ System - 10-Step Demo Presentation Script
+
+This script provides an exact 10-step walkthrough you can use to narrate the 3-5 minute demo video on Day 3. You can demonstrate the flow either using the fully built application or by running the `integration_test.py` script, which simulates the complete pipeline in real time.
+
+---
+
+## Slide/Screen Walkthrough Outline
+
+| Step | Time | Visual Element | Narration / Actions |
+|---|---|---|---|
+| **1. Welcome & Project Abstract** | 0:00 - 0:20 | Cover Slide or Project Abstract page | *"Hello everyone! I am the Team Lead of the Crowd-Sourced FAQ Generation System. Traditional FAQ pages suffer from content decay and are hard to scale. Our project solves this by creating a 6-stage pipeline where user questions are semantically clustered, ranked by priority, answered using AI draft curation, moderated by experts, and made instantly searchable by the community."* |
+| **2. Scaffolding & Folder Tour** | 0:20 - 0:40 | Code Editor showing folder structure | *"First, as Team Lead, I set up our repository with clean, independent spaces. We have `/frontend` built with React & Tailwind CSS, `/backend` powered by Express, `/nlp-service` using Python sentence-transformers, and `/docs` for our schemas and documents. Each module has pre-defined scaffolds so the team could build in parallel."* |
+| **3. Architecture & API Contract** | 0:40 - 1:00 | `docs/architecture.md` / `docs/api_contract.md` | *"To ensure perfect integration, we established a strict API contract defining endpoints like `/api/questions` and `/api/votes`. Our mathematical model utilizes Cosine Similarity with a 0.85 threshold for deduplication, and a time-decay priority formula on our Express backend."* |
+| **4. Stage 1: Question Submission** | 1:00 - 1:25 | Form view (UI or Integration Script) | *"Let's submit our first question: **'How can I reset my account password?'** under the 'Account Security' category. The frontend captures the text, category, and timestamp, sending a `POST` request to the backend."* |
+| **5. Stage 2: NLP Similarity & Clustering** | 1:25 - 1:55 | Output log showing similarity calculation | *"Now let's submit another question: **'Forgot password, how to reset?'**. Instead of creating a duplicate question, the NLP service runs sentence embeddings, detects a cosine similarity greater than 0.85, and automatically merges it into our existing password reset cluster. This keeps our system noise-free."* |
+| **6. Stage 3: Community Voting & Priority** | 1:55 - 2:20 | List of clusters showing scores | *"Other users can browse unanswered questions. Let's upvote the password reset cluster. The backend dynamically recalculates the Priority Score using our recency-decay formula. Since it has high upvotes and is recent, it rises to the top of our answer queue."* |
+| **7. Stage 4: AI-Assisted Curation** | 2:20 - 2:45 | Log showing draft answer creation | *"Behind the scenes, our AI pipeline grabs the top cluster. It sends a structured prompt to a Large Language Model, which immediately drafts a context-aware answer for the moderator: **'To reset your password, click the Forgot Password link on the login screen...'**"* |
+| **8. Stage 5: Expert Moderation Dashboard** | 2:45 - 3:10 | Moderator Dashboard View | *"Next, we log in as a moderator. In the admin dashboard, we can see the active cluster, its upvotes, and the AI-drafted answer. If we want, we can refine the answer text to ensure absolute accuracy. We edit the text and click 'Approve'."* |
+| **9. Stage 6: Public FAQ & Search** | 3:10 - 3:30 | Public FAQ search page | *"Once approved, the backend writes this to our permanent `PUBLISHED_FAQ` base. We navigate to the public FAQ page, type 'password' into the search bar, and our approved Q&A pair immediately filters to the top. The cycle is complete!"* |
+| **10. Conclusion & Summary** | 3:30 - 3:45 | End Slide / Team Roster | *"In just three days, our team integrated full-stack React, Express, database schemas, and Python embeddings to build a self-improving FAQ platform. Thank you!"* |
