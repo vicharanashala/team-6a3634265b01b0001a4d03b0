@@ -305,7 +305,7 @@ function generateAIDraftAnswer(questionText, category) {
 // =====================================================================
 
 // Submit Question (Stage 1 & 2)
-app.post('/api/questions', (req, res) => {
+app.post('/api/questions', async (req, res) => {
   // Verify request body integrity
   const { question_text, category, user_id, ai_model } = req.body;
   if (!question_text || !category) {
