@@ -844,6 +844,22 @@ export default function App() {
         setIsChatTyping(false);
       }, 800);
     }
+  const handleGitSync = async () => {
+    setIsSyncing(true);
+    if (isConnected) {
+      try {
+        const res = await fetch('http://localhost:5000/api/git-sync', { method: 'POST' });
+        const data = await res.json();
+        setIsSyncing(false);
+        if (data.success) {
+          triggerAlert(data.message, "success");
+        }
+      } catch (err) {
+        setIsSyncing(false);
+      }
+    }
+  };
+
   const handleClearLogs = () => {
     setLogs([]);
     triggerAlert("System Activity logs cleared.", "success");
