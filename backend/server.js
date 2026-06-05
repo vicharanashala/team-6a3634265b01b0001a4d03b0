@@ -5,6 +5,7 @@ const cors = require('cors');
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
 
+// Initializing Express Application Instance
 const app = express();
 const PORT = process.env.PORT || 5000;
 
