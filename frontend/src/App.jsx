@@ -821,6 +821,29 @@ export default function App() {
     }
   };
 
+    } else {
+      setTimeout(() => {
+        let bestSimilarity = 0.0;
+        let bestFaq = null;
+        faqs.forEach(f => {
+          const sim = calculateCosineSimilarity(userMessageText, f.question);
+          if (sim > bestSimilarity) {
+            bestSimilarity = sim;
+            bestFaq = f;
+          }
+        });
+        let replyText = "I couldn't find a verified answer matching your question in our FAQ database.";
+        if (bestFaq && bestSimilarity > 0.35) replyText = bestFaq.answer;
+        const aiMsg = {
+          id: `chat_${Date.now()}_a`,
+          sender: 'ai',
+          text: replyText,
+          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        };
+        setChatMessages(prev => [...prev, aiMsg]);
+        setIsChatTyping(false);
+      }, 800);
+    }
   const handleClearLogs = () => {
     setLogs([]);
     triggerAlert("System Activity logs cleared.", "success");
