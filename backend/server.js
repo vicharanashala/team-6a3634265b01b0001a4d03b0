@@ -233,6 +233,7 @@ function generateAIDraftAnswer(questionText, category) {
   // Match keywords related to authentication and credential resets
   if (text.includes("password") || text.includes("reset")) {
     return `To reset your credentials in the ${category} module, click the 'Forgot Password' link situated on the login prompt, key in your account email, and click submit. A password-reset verification key will be sent to your email immediately.`;
+  // Match keywords related to payments, billing, and receipts
   } else if (text.includes("invoice") || text.includes("bill") || text.includes("receipt") || text.includes("payment")) {
     return `You can find your receipts under Settings -> Invoices. Choose the target billing interval and select the 'Download PDF' button to fetch the document directly. If payments fail, verify your card expiry dates.`;
   } else if (text.includes("guideline") || text.includes("policy") || text.includes("rule") || text.includes("terms")) {
