@@ -28,6 +28,7 @@ const db = new sqlite3.Database(dbPath, (err) => {
 });
 
 function initializeTables() {
+  // Run serialized table creations inside memory cache
   db.serialize(() => {
     db.run("PRAGMA foreign_keys = ON;");
 
