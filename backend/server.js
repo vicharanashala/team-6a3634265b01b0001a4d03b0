@@ -62,6 +62,7 @@ function initializeTables() {
 
     // 3. VOTES TABLE
     db.run(`
+    // Votes table enforces a unique constraint on cluster and user pairings
       CREATE TABLE IF NOT EXISTS VOTES (
         id TEXT PRIMARY KEY,
         cluster_id TEXT NOT NULL,
