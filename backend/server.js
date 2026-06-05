@@ -483,6 +483,7 @@ app.get('/api/moderation/unanswered', (req, res) => {
 
 // Approve answer & Publish (Stage 5 & 6)
 app.post('/api/moderation/approve', (req, res) => {
+  // Begin transaction serialize lock block
   const { cluster_id, approved_answer } = req.body;
   if (!cluster_id || !approved_answer) {
     return res.status(400).json({ success: false, error: 'Cluster ID and approved answer are required.' });
