@@ -155,8 +155,6 @@ function CurationCard({ cluster, communityAnswers, onPublish }) {
 export default function App() {
   // Navigation & Portal state
   const [workspace, setWorkspace] = useState('user'); // 'user' or 'admin'
-  // Admin panel lock state variables
-  const [adminPasswordState, setAdminPasswordState] = useState('');
   const [userTab, setUserTab] = useState('faq'); // 'faq', 'ask-ai', 'submit-vote', 'analytics', 'about'
   const [activeInsightModule, setActiveInsightModule] = useState('nlp-dedup');
   const [isAdminUnlocked, setIsAdminUnlocked] = useState(false);
@@ -223,7 +221,6 @@ export default function App() {
 
   // AI Chat Assistant State
   const [chatMessages, setChatMessages] = useState([
-  // Chat Assistant message reference logger
     { id: '1', sender: 'ai', text: 'Hello! I am your AI Knowledge Assistant. Ask me anything, and I will search our published FAQs and knowledge base to answer you.', time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }
   ]);
   const [chatInput, setChatInput] = useState('');
@@ -769,7 +766,7 @@ export default function App() {
     triggerAlert("Database seeded successfully with default values.", "success");
   };
 
-  // Clear Audit log stream
+  // Admin password unlock check
   const handleAdminUnlock = (e) => {
     e.preventDefault();
     if (adminPassword === 'admin') {
@@ -784,11 +781,15 @@ export default function App() {
     }
   };
 
+  // Conversational Chat Assistant Handler
   const handleSendChat = async (e) => {
     e.preventDefault();
     if (!chatInput.trim()) return;
+
     const userMessageText = chatInput.trim();
     setChatInput('');
+
+    // Add user message to chat state
     const userMsg = {
       id: `chat_${Date.now()}_u`,
       sender: 'user',
@@ -797,6 +798,7 @@ export default function App() {
     };
     setChatMessages(prev => [...prev, userMsg]);
     setIsChatTyping(true);
+
     if (isConnected) {
       try {
         const res = await fetch('http://localhost:5000/api/chat', {
@@ -805,6 +807,7 @@ export default function App() {
           body: JSON.stringify({ message: userMessageText })
         });
         const data = await res.json();
+        
         setTimeout(() => {
           const aiMsg = {
             id: `chat_${Date.now()}_a`,
@@ -814,17 +817,20 @@ export default function App() {
           };
           setChatMessages(prev => [...prev, aiMsg]);
           setIsChatTyping(false);
+          logActivity("SYSTEM", `AI Assistant answered query: "${userMessageText.substring(0, 30)}..."`);
         }, 800);
       } catch (err) {
-        setIsChatTyping(false);
+        setTimeout(() => {
+          setIsChatTyping(false);
+          triggerAlert("Failed to fetch reply from AI chat API.", "error");
+        }, 500);
       }
-    }
-  };
-
     } else {
+      // Local Mock similarity chat search
       setTimeout(() => {
         let bestSimilarity = 0.0;
         let bestFaq = null;
+
         faqs.forEach(f => {
           const sim = calculateCosineSimilarity(userMessageText, f.question);
           if (sim > bestSimilarity) {
@@ -832,8 +838,12 @@ export default function App() {
             bestFaq = f;
           }
         });
-        let replyText = "I couldn't find a verified answer matching your question in our FAQ database.";
-        if (bestFaq && bestSimilarity > 0.35) replyText = bestFaq.answer;
+
+        let replyText = "I couldn't find a verified answer matching your question in our FAQ database. Would you like to submit this question to our community prioritizing queue?";
+        if (bestFaq && bestSimilarity > 0.35) {
+          replyText = bestFaq.answer;
+        }
+
         const aiMsg = {
           id: `chat_${Date.now()}_a`,
           sender: 'ai',
@@ -842,30 +852,47 @@ export default function App() {
         };
         setChatMessages(prev => [...prev, aiMsg]);
         setIsChatTyping(false);
+        logActivity("DEDUPLICATION", `Simulated chat search for "${userMessageText.substring(0, 30)}..." similarity score: ${bestSimilarity.toFixed(2)}`);
       }, 800);
-    }
-  const handleGitSync = async () => {
-    setIsSyncing(true);
-    if (isConnected) {
-      try {
-        const res = await fetch('http://localhost:5000/api/git-sync', { method: 'POST' });
-        const data = await res.json();
-        setIsSyncing(false);
-        if (data.success) {
-          triggerAlert(data.message, "success");
-        }
-      } catch (err) {
-        setIsSyncing(false);
-      }
     }
   };
 
+  // Git synchronization trigger
+  const handleGitSync = async () => {
+    setIsSyncing(true);
+    logActivity("SYSTEM", "Initiating Git remote synchronization check...");
+
+    if (isConnected) {
+      try {
+        const res = await fetch('http://localhost:5000/api/git-sync', {
+          method: 'POST'
+        });
+        const data = await res.json();
+        
+        setIsSyncing(false);
+        if (data.success) {
+          triggerAlert(data.message, "success");
+          logActivity("SYSTEM", "Git Synchronization: Pushed commits successfully.");
+        } else {
+          triggerAlert(data.message || "Git synchronization failed.", "error");
+          logActivity("SYSTEM", `Git Synchronization Error: ${data.details || 'Unknown error'}`);
+        }
+      } catch (err) {
+        setIsSyncing(false);
+        triggerAlert("Error communicating with Git Sync API.", "error");
+        logActivity("SYSTEM", "Git Synchronization: Server communications offline.");
+      }
     } else {
+      // Simulated Sync delay
       setTimeout(() => {
         setIsSyncing(false);
         triggerAlert("Successfully synchronized code changes with remote Git repository (Simulated).", "success");
+        logActivity("SYSTEM", "Git Synchronization: Pushed code change commits to origin main (Simulated).");
       }, 2000);
     }
+  };
+
+  // Clear Audit log stream
   const handleClearLogs = () => {
     setLogs([]);
     triggerAlert("System Activity logs cleared.", "success");
