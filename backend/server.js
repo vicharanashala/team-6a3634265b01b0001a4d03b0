@@ -227,6 +227,7 @@ function updatePriorityScores(callback) {
 // =====================================================================
 // Stage 4: AI Template Generative Draft Drafts
 // =====================================================================
+// Hardcoded template-based fallback generator for AI drafts
 function generateAIDraftAnswer(questionText, category) {
   const text = questionText.toLowerCase();
   if (text.includes("password") || text.includes("reset")) {
