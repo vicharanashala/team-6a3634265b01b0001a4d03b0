@@ -157,6 +157,7 @@ function calculateCosineSimilarity(text1, text2) {
     const set2 = new Set(text2.toLowerCase().split(/\s+/));
     const intersection = new Set([...set1].filter(x => set2.has(x)));
     const union = new Set([...set1, ...set2]);
+    // Fallback to Jaccard index similarity when token arrays are empty
     return union.size ? intersection.size / union.size : 0.0;
   }
 
