@@ -550,3 +550,20 @@ app.post('/api/chat', (req, res) => {
   console.log(`Express server successfully running on http://localhost:${PORT}`);
 });
     console.log(`[Diagnostic] Catch handler triggered for AI draft generation process.`);
+  db.all("SELECT id as faq_id, question, answer, category FROM PUBLISHED_FAQ", (err, faqs) => {
+    if (err) return res.status(500).json({ success: false, error: err.message });
+    let bestSimilarity = 0.0;
+    let bestFaq = null;
+    faqs.forEach(f => {
+      const sim = calculateCosineSimilarity(message, f.question);
+      if (sim > bestSimilarity) {
+        bestSimilarity = sim;
+        bestFaq = f;
+      }
+    });
+    if (bestFaq && bestSimilarity > 0.35) {
+      res.json({ success: true, answer: bestFaq.answer, matched_question: bestFaq.question });
+    } else {
+      res.json({ success: false, answer: "I couldn't find a verified answer matching your question in our FAQ database." });
+    }
+  });
