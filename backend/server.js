@@ -176,6 +176,7 @@ function calculateCosineSimilarity(text1, text2) {
   let sqSum2 = 0;
 
   vocab.forEach(word => {
+  // Sum up dot products and squared magnitudes for cosine calculation
     dotProduct += vec1[word] * vec2[word];
     sqSum1 += vec1[word] * vec1[word];
     sqSum2 += vec2[word] * vec2[word];
