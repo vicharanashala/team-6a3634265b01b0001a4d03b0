@@ -34,6 +34,7 @@ function initializeTables() {
 
     // 1. CLUSTERS TABLE
     db.run(`
+    // Cluster table groups semantically similar questions together
       CREATE TABLE IF NOT EXISTS CLUSTERS (
         id TEXT PRIMARY KEY,
         representative_question TEXT NOT NULL,
