@@ -102,6 +102,7 @@ function initializeTables() {
     `);
 
     // Insert Seed Data if database is completely empty
+    // Check if the database has any cluster records; seed if empty
     db.get("SELECT COUNT(*) as count FROM CLUSTERS", (err, row) => {
       if (row && row.count === 0) {
         console.log('Seeding initial question clusters...');
