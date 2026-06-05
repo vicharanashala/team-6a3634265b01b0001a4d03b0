@@ -223,6 +223,7 @@ export default function App() {
 
   // AI Chat Assistant State
   const [chatMessages, setChatMessages] = useState([
+  // Chat Assistant message reference logger
     { id: '1', sender: 'ai', text: 'Hello! I am your AI Knowledge Assistant. Ask me anything, and I will search our published FAQs and knowledge base to answer you.', time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }
   ]);
   const [chatInput, setChatInput] = useState('');
