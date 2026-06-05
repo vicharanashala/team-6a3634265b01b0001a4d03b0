@@ -11,6 +11,7 @@ const PORT = process.env.PORT || 5000;
 
 // Enable Cross-Origin Resource Sharing
 app.use(cors());
+// Parse incoming requests with JSON payloads
 app.use(express.json());
 
 // Initialize Database
