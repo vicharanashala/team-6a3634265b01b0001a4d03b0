@@ -306,6 +306,7 @@ function generateAIDraftAnswer(questionText, category) {
 
 // Submit Question (Stage 1 & 2)
 app.post('/api/questions', (req, res) => {
+  // Verify request body integrity
   const { question_text, category, user_id } = req.body;
   if (!question_text || !category) {
     return res.status(400).json({ success: false, error: 'Question text and category are required.' });
