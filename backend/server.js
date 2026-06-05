@@ -317,7 +317,7 @@ app.post('/api/questions', async (req, res) => {
   const now = new Date().toISOString();
 
   // Fetch active unanswered clusters for similarity match
-  db.all("SELECT id, representative_question FROM CLUSTERS WHERE status = 'unanswered'", (err, clusters) => {
+  db.all("SELECT id, representative_question FROM CLUSTERS WHERE status = 'unanswered'", async (err, clusters) => {
     if (err) return res.status(500).json({ success: false, error: err.message });
 
     let bestSimilarity = 0.0;
