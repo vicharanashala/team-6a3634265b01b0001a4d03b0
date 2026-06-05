@@ -364,23 +364,54 @@ app.post('/api/questions', async (req, res) => {
           [questionId, question_text, category, clusterId, userId, now]);
 
         // Stage 4: Generate and link AI answer
-        const aiDraft = generateAIDraftAnswer(question_text, category);
-        db.run("INSERT INTO ANSWERS (id, cluster_id, answer_text, author_type, user_id, upvotes, created_at) VALUES (?, ?, ?, 'ai', NULL, 0, ?)",
-          ['ans_' + clusterId + '_ai', clusterId, aiDraft, now],
-          function (err) {
-            if (err) return res.status(500).json({ success: false, error: err.message });
-            
-            updatePriorityScores(() => {
-              res.status(201).json({
-                success: true,
-                message: 'Question received. No similar questions found. Started new cluster.',
-                cluster_id: clusterId,
-                is_new: true,
-                similarity: parseFloat(bestSimilarity.toFixed(3))
+      try {
+        const aiDraft = await generateAIDraftAnswerAsync(question_text, category, activeModel);
+        db.serialize(() => {
+          db.run("INSERT INTO CLUSTERS (id, representative_question, category, upvotes, priority_score, status, created_at) VALUES (?, ?, ?, 0, 0.5, 'unanswered', ?)",
+            [clusterId, question_text, category, now]);
+          db.run("INSERT INTO QUESTIONS (id, question_text, category, cluster_id, user_id, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            [questionId, question_text, category, clusterId, userId, now]);
+          db.run("INSERT INTO ANSWERS (id, cluster_id, answer_text, author_type, user_id, upvotes, created_at) VALUES (?, ?, ?, 'ai', NULL, 0, ?)",
+            ['ans_' + clusterId + '_ai', clusterId, aiDraft, now],
+            function (err) {
+              if (err) return res.status(500).json({ success: false, error: err.message });
+              updatePriorityScores(() => {
+                res.status(201).json({
+                  success: true,
+                  message: 'Question received. No similar questions found. Started new cluster.',
+                  cluster_id: clusterId,
+                  is_new: true,
+                  similarity: parseFloat(bestSimilarity.toFixed(3))
+                });
               });
-            });
-          }
-        );
+            }
+          );
+        });
+      } catch (aiErr) {
+        console.error('[AI Draft Error] Failed in async flow:', aiErr);
+        const aiDraft = generateAIDraftAnswer(question_text, category);
+        db.serialize(() => {
+          db.run("INSERT INTO CLUSTERS (id, representative_question, category, upvotes, priority_score, status, created_at) VALUES (?, ?, ?, 0, 0.5, 'unanswered', ?)",
+            [clusterId, question_text, category, now]);
+          db.run("INSERT INTO QUESTIONS (id, question_text, category, cluster_id, user_id, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            [questionId, question_text, category, clusterId, userId, now]);
+          db.run("INSERT INTO ANSWERS (id, cluster_id, answer_text, author_type, user_id, upvotes, created_at) VALUES (?, ?, ?, 'ai', NULL, 0, ?)",
+            ['ans_' + clusterId + '_ai', clusterId, aiDraft, now],
+            function (err) {
+              if (err) return res.status(500).json({ success: false, error: err.message });
+              updatePriorityScores(() => {
+                res.status(201).json({
+                  success: true,
+                  message: 'Question received. No similar questions found. Started new cluster (with template fallback).',
+                  cluster_id: clusterId,
+                  is_new: true,
+                  similarity: parseFloat(bestSimilarity.toFixed(3))
+                });
+              });
+            }
+          );
+        });
+      }
       });
     }
   });
