@@ -155,6 +155,8 @@ function CurationCard({ cluster, communityAnswers, onPublish }) {
 export default function App() {
   // Navigation & Portal state
   const [workspace, setWorkspace] = useState('user'); // 'user' or 'admin'
+  // Admin panel lock state variables
+  const [adminPasswordState, setAdminPasswordState] = useState('');
   const [userTab, setUserTab] = useState('faq'); // 'faq', 'ask-ai', 'submit-vote', 'analytics', 'about'
   const [activeInsightModule, setActiveInsightModule] = useState('nlp-dedup');
   const [isAdminUnlocked, setIsAdminUnlocked] = useState(false);
