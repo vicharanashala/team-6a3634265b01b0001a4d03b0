@@ -555,20 +555,10 @@ app.post('/api/git-sync', (req, res) => {
   res.json({ success: true, message: 'Sync complete' });
 });
 
-  db.all("SELECT id as faq_id, question, answer, category FROM PUBLISHED_FAQ", (err, faqs) => {
-    if (err) return res.status(500).json({ success: false, error: err.message });
-    let bestSimilarity = 0.0;
-    let bestFaq = null;
-    faqs.forEach(f => {
-      const sim = calculateCosineSimilarity(message, f.question);
-      if (sim > bestSimilarity) {
-        bestSimilarity = sim;
-        bestFaq = f;
-      }
-    });
-    if (bestFaq && bestSimilarity > 0.35) {
-      res.json({ success: true, answer: bestFaq.answer, matched_question: bestFaq.question });
-    } else {
-      res.json({ success: false, answer: "I couldn't find a verified answer matching your question in our FAQ database." });
+  const { exec } = require('child_process');
+  exec('git push origin main', (error, stdout, stderr) => {
+    if (error) {
+      return res.status(500).json({ success: false, message: 'Git sync failed.', details: stderr || error.message });
     }
+    res.json({ success: true, message: 'Successfully synchronized code changes with remote Git repository.' });
   });
