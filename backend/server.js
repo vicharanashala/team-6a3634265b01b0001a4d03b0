@@ -1,3 +1,22 @@
+    if (provider === 'grok' || provider === 'grok-beta' || provider === 'claude-3-5-sonnet') {
+      const apiKey = process.env.GROK_API_KEY;
+      if (!apiKey) return fallback();
+      const response = await fetch('https://api.x.ai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`
+        },
+        body: JSON.stringify({
+          model: 'grok-beta',
+          messages: [{ role: 'user', content: questionText }]
+        })
+      });
+      const data = await response.json();
+      if (data.choices && data.choices[0] && data.choices[0].message) {
+        return data.choices[0].message.content.trim();
+      }
+    }
     if (provider === 'gemini-1.5-flash' || provider === 'gemini' || !provider) {
       const apiKey = process.env.GEMINI_API_KEY;
       if (!apiKey) return fallback();
