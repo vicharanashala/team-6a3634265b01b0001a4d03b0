@@ -48,6 +48,7 @@ function initializeTables() {
 
     // 2. QUESTIONS TABLE
     db.run(`
+    // Questions table stores individual user submissions mapped to clusters
       CREATE TABLE IF NOT EXISTS QUESTIONS (
         id TEXT PRIMARY KEY,
         question_text TEXT NOT NULL,
