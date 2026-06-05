@@ -784,6 +784,43 @@ export default function App() {
     }
   };
 
+  const handleSendChat = async (e) => {
+    e.preventDefault();
+    if (!chatInput.trim()) return;
+    const userMessageText = chatInput.trim();
+    setChatInput('');
+    const userMsg = {
+      id: `chat_${Date.now()}_u`,
+      sender: 'user',
+      text: userMessageText,
+      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    };
+    setChatMessages(prev => [...prev, userMsg]);
+    setIsChatTyping(true);
+    if (isConnected) {
+      try {
+        const res = await fetch('http://localhost:5000/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: userMessageText })
+        });
+        const data = await res.json();
+        setTimeout(() => {
+          const aiMsg = {
+            id: `chat_${Date.now()}_a`,
+            sender: 'ai',
+            text: data.answer,
+            time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          };
+          setChatMessages(prev => [...prev, aiMsg]);
+          setIsChatTyping(false);
+        }, 800);
+      } catch (err) {
+        setIsChatTyping(false);
+      }
+    }
+  };
+
   const handleClearLogs = () => {
     setLogs([]);
     triggerAlert("System Activity logs cleared.", "success");
