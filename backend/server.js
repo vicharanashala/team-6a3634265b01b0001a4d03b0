@@ -15,6 +15,7 @@ app.use(cors());
 app.use(express.json());
 
 // Initialize Database
+    // Define absolute path to SQLite file storage
 const dbPath = path.join(__dirname, 'database.sqlite');
 const db = new sqlite3.Database(dbPath, (err) => {
   if (err) {
