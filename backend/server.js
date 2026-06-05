@@ -228,6 +228,16 @@ function updatePriorityScores(callback) {
 // Stage 4: AI Template Generative Draft Drafts
 // =====================================================================
 // Hardcoded template-based fallback generator for AI drafts
+async function generateAIDraftAnswerAsync(questionText, category, provider = 'gemini-1.5-flash') {
+  console.log(`[AI Draft] Generating draft using provider: ${provider}`);
+  const fallback = () => generateAIDraftAnswer(questionText, category);
+  try {
+    return fallback();
+  } catch (err) {
+    return fallback();
+  }
+}
+
 function generateAIDraftAnswer(questionText, category) {
   const text = questionText.toLowerCase();
   // Match keywords related to authentication and credential resets
