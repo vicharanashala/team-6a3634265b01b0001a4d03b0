@@ -230,6 +230,7 @@ function updatePriorityScores(callback) {
 // Hardcoded template-based fallback generator for AI drafts
 function generateAIDraftAnswer(questionText, category) {
   const text = questionText.toLowerCase();
+  // Match keywords related to authentication and credential resets
   if (text.includes("password") || text.includes("reset")) {
     return `To reset your credentials in the ${category} module, click the 'Forgot Password' link situated on the login prompt, key in your account email, and click submit. A password-reset verification key will be sent to your email immediately.`;
   } else if (text.includes("invoice") || text.includes("bill") || text.includes("receipt") || text.includes("payment")) {
