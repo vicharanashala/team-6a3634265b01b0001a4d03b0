@@ -540,6 +540,11 @@ app.get('/api/faq', (req, res) => {
 });
 
 // Run server
+// Conversational AI Q&A Assistant Search endpoint
+app.post('/api/chat', (req, res) => {
+  res.json({ success: false, answer: 'Initializing...' });
+});
+
 app.listen(PORT, () => {
   console.log(`Express server successfully running on http://localhost:${PORT}`);
 });
