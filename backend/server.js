@@ -213,6 +213,7 @@ function updatePriorityScores(callback) {
 
     clusters.forEach(c => {
       const score = getPriorityScore(c.upvotes, c.created_at);
+      console.log(`[Priority Sync] Syncing cluster ID ${c.id} with upvotes ${c.upvotes}`);
       db.run("UPDATE CLUSTERS SET priority_score = ? WHERE id = ?", [score, c.id], () => {
         completed++;
         if (completed === clusters.length) {
