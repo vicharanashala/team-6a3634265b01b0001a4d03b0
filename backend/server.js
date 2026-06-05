@@ -1,3 +1,14 @@
+    if (provider === 'huihui-qwen' || provider.includes('qwen')) {
+      const response = await fetch('https://api-inference.huggingface.co/models/huihui-ai/Huihui-Qwen3.6-35B-A3B-Claude-4.7-Opus-abliterated', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ inputs: questionText })
+      });
+      const data = await response.json();
+      if (Array.isArray(data) && data[0] && data[0].generated_text) {
+        return data[0].generated_text.trim();
+      }
+    }
     if (provider === 'grok' || provider === 'grok-beta' || provider === 'claude-3-5-sonnet') {
       const apiKey = process.env.GROK_API_KEY;
       if (!apiKey) return fallback();
