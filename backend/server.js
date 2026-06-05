@@ -240,6 +240,7 @@ function calculateCosineSimilarity(text1, text2) {
 // =====================================================================
 // Damped recency decay prioritization score: Score = (upvotes + 1) / sqrt(delta_hours + 2)
 function getPriorityScore(upvotes, createdAtStr) {
+  // Recency time decay computation block
   const createdAt = new Date(createdAtStr);
   const now = new Date();
   // Calculate elapsed time in hours between current timestamp and cluster creation
