@@ -19,6 +19,7 @@ app.use(express.json());
 const dbPath = path.join(__dirname, 'database.sqlite');
 const db = new sqlite3.Database(dbPath, (err) => {
   if (err) {
+      // Log connection error to diagnostic stderr console
     console.error('Database connection error:', err.message);
   } else {
     console.log('Connected to SQLite database at:', dbPath);
