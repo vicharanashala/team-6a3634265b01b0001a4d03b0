@@ -510,3 +510,4 @@ app.get('/api/faq', (req, res) => {
 app.listen(PORT, () => {
   console.log(`Express server successfully running on http://localhost:${PORT}`);
 });
+    console.log(`[Diagnostic] Catch handler triggered for AI draft generation process.`);
