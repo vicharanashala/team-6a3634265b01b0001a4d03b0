@@ -1,71 +1,19 @@
-      console.warn('[API Key Check] Gemini key missing, falling back to offline templates');
-    if (provider === 'huihui-qwen' || provider.includes('qwen')) {
-      const response = await fetch('https://api-inference.huggingface.co/models/huihui-ai/Huihui-Qwen3.6-35B-A3B-Claude-4.7-Opus-abliterated', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ inputs: questionText })
-      });
-      const data = await response.json();
-      if (Array.isArray(data) && data[0] && data[0].generated_text) {
-        return data[0].generated_text.trim();
-      }
-    }
-    if (provider === 'grok' || provider === 'grok-beta' || provider === 'claude-3-5-sonnet') {
-      const apiKey = process.env.GROK_API_KEY;
-      if (!apiKey) return fallback();
-      const response = await fetch('https://api.x.ai/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`
-        },
-        body: JSON.stringify({
-          model: 'grok-beta',
-          messages: [{ role: 'user', content: questionText }]
-        })
-      });
-      const data = await response.json();
-      if (data.choices && data.choices[0] && data.choices[0].message) {
-        return data.choices[0].message.content.trim();
-      }
-    }
-    if (provider === 'gemini-1.5-flash' || provider === 'gemini' || !provider) {
-      const apiKey = process.env.GEMINI_API_KEY;
-      if (!apiKey) return fallback();
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: `Category: ${category}\nQuestion: ${questionText}` }] }]
-        })
-      });
-      const data = await response.json();
-      if (data.candidates && data.candidates[0] && data.candidates[0].content) {
-        return data.candidates[0].content.parts[0].text.trim();
-      }
-    }
-// [Backend Setup] Initializing system configurations
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
 
-// Initializing Express Application Instance
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Enable Cross-Origin Resource Sharing
 app.use(cors());
-// Parse incoming requests with JSON payloads
 app.use(express.json());
 
 // Initialize Database
-    // Define absolute path to SQLite file storage
 const dbPath = path.join(__dirname, 'database.sqlite');
 const db = new sqlite3.Database(dbPath, (err) => {
   if (err) {
-      // Log connection error to diagnostic stderr console
     console.error('Database connection error:', err.message);
   } else {
     console.log('Connected to SQLite database at:', dbPath);
@@ -74,13 +22,11 @@ const db = new sqlite3.Database(dbPath, (err) => {
 });
 
 function initializeTables() {
-  // Run serialized table creations inside memory cache
   db.serialize(() => {
     db.run("PRAGMA foreign_keys = ON;");
 
     // 1. CLUSTERS TABLE
     db.run(`
-    // Cluster table groups semantically similar questions together
       CREATE TABLE IF NOT EXISTS CLUSTERS (
         id TEXT PRIMARY KEY,
         representative_question TEXT NOT NULL,
@@ -94,7 +40,6 @@ function initializeTables() {
 
     // 2. QUESTIONS TABLE
     db.run(`
-    // Questions table stores individual user submissions mapped to clusters
       CREATE TABLE IF NOT EXISTS QUESTIONS (
         id TEXT PRIMARY KEY,
         question_text TEXT NOT NULL,
@@ -108,7 +53,6 @@ function initializeTables() {
 
     // 3. VOTES TABLE
     db.run(`
-    // Votes table enforces a unique constraint on cluster and user pairings
       CREATE TABLE IF NOT EXISTS VOTES (
         id TEXT PRIMARY KEY,
         cluster_id TEXT NOT NULL,
@@ -121,7 +65,6 @@ function initializeTables() {
 
     // 4. ANSWERS TABLE
     db.run(`
-    // Answers table contains AI generated drafts and moderator edits
       CREATE TABLE IF NOT EXISTS ANSWERS (
         id TEXT PRIMARY KEY,
         cluster_id TEXT NOT NULL,
@@ -136,7 +79,6 @@ function initializeTables() {
 
     // 5. PUBLISHED_FAQ TABLE
     db.run(`
-    // Published FAQ table represents verified community knowledge bases
       CREATE TABLE IF NOT EXISTS PUBLISHED_FAQ (
         id TEXT PRIMARY KEY,
         cluster_id TEXT NOT NULL,
@@ -148,7 +90,6 @@ function initializeTables() {
     `);
 
     // Insert Seed Data if database is completely empty
-    // Check if the database has any cluster records; seed if empty
     db.get("SELECT COUNT(*) as count FROM CLUSTERS", (err, row) => {
       if (row && row.count === 0) {
         console.log('Seeding initial question clusters...');
@@ -159,7 +100,6 @@ function initializeTables() {
 }
 
 function seedInitialData() {
-  // Insert initial mocked clusters, questions, and drafts
   const now = new Date().toISOString();
   const c1 = "cluster_1001";
   const c2 = "cluster_1002";
@@ -184,17 +124,13 @@ function seedInitialData() {
 // =====================================================================
 // Stage 2: Token-based Cosine Similarity Algorithmic Logic
 // =====================================================================
-// Stop words array to filter out noise from search queries
 const STOP_WORDS = new Set(["the", "a", "an", "is", "are", "to", "for", "in", "on", "at", "my", "how", "what", "where", "why", "do", "i", "can", "reset", "forgot"]);
 
-// Tokenize lowercased text and filter out standard stop words
 function getTokens(text) {
-  // Filter out stop words from word array
   const words = text.toLowerCase().match(/\w+/g) || [];
   return words.filter(w => !STOP_WORDS.has(w));
 }
 
-// Computes cosine similarity of term frequency vectors
 function calculateCosineSimilarity(text1, text2) {
   const tokens1 = getTokens(text1);
   const tokens2 = getTokens(text2);
@@ -204,7 +140,6 @@ function calculateCosineSimilarity(text1, text2) {
     const set2 = new Set(text2.toLowerCase().split(/\s+/));
     const intersection = new Set([...set1].filter(x => set2.has(x)));
     const union = new Set([...set1, ...set2]);
-    // Fallback to Jaccard index similarity when token arrays are empty
     return union.size ? intersection.size / union.size : 0.0;
   }
 
@@ -223,7 +158,6 @@ function calculateCosineSimilarity(text1, text2) {
   let sqSum2 = 0;
 
   vocab.forEach(word => {
-  // Sum up dot products and squared magnitudes for cosine calculation
     dotProduct += vec1[word] * vec2[word];
     sqSum1 += vec1[word] * vec1[word];
     sqSum2 += vec2[word] * vec2[word];
@@ -239,12 +173,9 @@ function calculateCosineSimilarity(text1, text2) {
 // =====================================================================
 // Stage 3: Priority scoring formula
 // =====================================================================
-// Damped recency decay prioritization score: Score = (upvotes + 1) / sqrt(delta_hours + 2)
 function getPriorityScore(upvotes, createdAtStr) {
-  // Recency time decay computation block
   const createdAt = new Date(createdAtStr);
   const now = new Date();
-  // Calculate elapsed time in hours between current timestamp and cluster creation
   const deltaHours = Math.max(0.0, (now - createdAt) / 3600000.0);
   
   const score = (upvotes + 1.0) / Math.sqrt(deltaHours + 2.0);
@@ -252,7 +183,6 @@ function getPriorityScore(upvotes, createdAtStr) {
 }
 
 function updatePriorityScores(callback) {
-  // Retrieve all unanswered clusters and update their priority decay ranks
   db.all("SELECT id, upvotes, created_at FROM CLUSTERS WHERE status = 'unanswered'", (err, clusters) => {
     if (err) return callback(err);
 
@@ -261,7 +191,6 @@ function updatePriorityScores(callback) {
 
     clusters.forEach(c => {
       const score = getPriorityScore(c.upvotes, c.created_at);
-      console.log(`[Priority Sync] Syncing cluster ID ${c.id} with upvotes ${c.upvotes}`);
       db.run("UPDATE CLUSTERS SET priority_score = ? WHERE id = ?", [score, c.id], () => {
         completed++;
         if (completed === clusters.length) {
@@ -273,32 +202,118 @@ function updatePriorityScores(callback) {
 }
 
 // =====================================================================
-// Stage 4: AI Template Generative Draft Drafts
+// Stage 4: AI Template Generative Draft Drafts & API Integrations
 // =====================================================================
-// Hardcoded template-based fallback generator for AI drafts
-async function generateAIDraftAnswerAsync(questionText, category, provider = 'gemini-1.5-flash') {
-  console.log(`[AI Draft] Generating draft using provider: ${provider}`);
-  const fallback = () => generateAIDraftAnswer(questionText, category);
-  try {
-    return fallback();
-  } catch (err) {
-    return fallback();
-  }
-}
-
 function generateAIDraftAnswer(questionText, category) {
   const text = questionText.toLowerCase();
-  // Match keywords related to authentication and credential resets
   if (text.includes("password") || text.includes("reset")) {
     return `To reset your credentials in the ${category} module, click the 'Forgot Password' link situated on the login prompt, key in your account email, and click submit. A password-reset verification key will be sent to your email immediately.`;
-  // Match keywords related to payments, billing, and receipts
   } else if (text.includes("invoice") || text.includes("bill") || text.includes("receipt") || text.includes("payment")) {
     return `You can find your receipts under Settings -> Invoices. Choose the target billing interval and select the 'Download PDF' button to fetch the document directly. If payments fail, verify your card expiry dates.`;
-  // Match keywords related to terms of service and member rules
   } else if (text.includes("guideline") || text.includes("policy") || text.includes("rule") || text.includes("terms")) {
     return `Community standards dictate that all member inputs be polite, non-advertising, and professional. Post submissions containing offensive content or unverified gossip will be flagged and purged by admins.`;
   } else {
     return `For questions regarding ${category}, please visit our documentation index, verify your user keys, or make sure your parameters align with the official configurations outlined in your team profile directory.`;
+  }
+}
+
+async function generateAIDraftAnswerAsync(questionText, category, provider = 'gemini-1.5-flash') {
+  console.log(`[AI Draft] Generating draft using provider: ${provider}`);
+  const fallback = () => generateAIDraftAnswer(questionText, category);
+
+  try {
+    if (provider === 'gemini-1.5-flash' || provider === 'gemini' || !provider) {
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey) {
+        console.warn('[AI Draft] GEMINI_API_KEY is not defined in env. Falling back.');
+        return fallback();
+      }
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{
+            parts: [{
+              text: `You are an expert technical support assistant. Formulate a direct, step-by-step resolution for the user's question, keeping the instructions professional, precise, and category-aligned.
+Category: ${category}
+Question: ${questionText}
+Draft Answer:`
+            }]
+          }]
+        })
+      });
+      const data = await response.json();
+      if (data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts[0]) {
+        return data.candidates[0].content.parts[0].text.trim();
+      } else {
+        console.warn('[AI Draft] Gemini API returned unexpected format:', JSON.stringify(data));
+        return fallback();
+      }
+    }
+
+    if (provider === 'grok' || provider === 'grok-beta' || provider === 'claude-3-5-sonnet' || provider === 'deepseek-r1-distill' || provider === 'llama-3.1-70b-instruct') {
+      const apiKey = process.env.GROK_API_KEY;
+      if (!apiKey) {
+        console.warn('[AI Draft] GROK_API_KEY is not defined in env. Falling back.');
+        return fallback();
+      }
+      
+      let modelName = 'grok-beta';
+      if (provider === 'claude-3-5-sonnet') modelName = 'grok-2';
+      if (provider === 'deepseek-r1-distill') modelName = 'grok-beta';
+      if (provider === 'llama-3.1-70b-instruct') modelName = 'grok-beta';
+
+      const response = await fetch('https://api.x.ai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`
+        },
+        body: JSON.stringify({
+          model: modelName,
+          messages: [
+            {
+              role: 'system',
+              content: `You are an expert technical support assistant for category ${category}. Formulate a direct, step-by-step resolution, keeping instructions professional and precise.`
+            },
+            {
+              role: 'user',
+              content: questionText
+            }
+          ],
+          temperature: 0.7
+        })
+      });
+      const data = await response.json();
+      if (data.choices && data.choices[0] && data.choices[0].message) {
+        return data.choices[0].message.content.trim();
+      } else {
+        console.warn('[AI Draft] Grok API returned unexpected format:', JSON.stringify(data));
+        return fallback();
+      }
+    }
+
+    if (provider === 'huihui-qwen' || provider.includes('qwen') || provider.includes('huihui')) {
+      const response = await fetch('https://api-inference.huggingface.co/models/huihui-ai/Huihui-Qwen3.6-35B-A3B-Claude-4.7-Opus-abliterated', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          inputs: `Question about ${category}: ${questionText}\nDetailed Answer:`
+        })
+      });
+      const data = await response.json();
+      if (Array.isArray(data) && data[0] && data[0].generated_text) {
+        return data[0].generated_text.trim();
+      } else {
+        console.warn('[AI Draft] HF Qwen Inference returned unexpected format:', JSON.stringify(data));
+        return fallback();
+      }
+    }
+
+    return fallback();
+  } catch (err) {
+    console.error('[AI Draft] API call failed with error:', err.message);
+    return fallback();
   }
 }
 
@@ -308,15 +323,14 @@ function generateAIDraftAnswer(questionText, category) {
 
 // Submit Question (Stage 1 & 2)
 app.post('/api/questions', async (req, res) => {
-  // Verify request body integrity
   const { question_text, category, user_id, ai_model } = req.body;
   if (!question_text || !category) {
     return res.status(400).json({ success: false, error: 'Question text and category are required.' });
   }
 
   const userId = user_id || 'user_anon';
-  const activeModel = ai_model || 'gemini-1.5-flash';
   const now = new Date().toISOString();
+  const activeModel = ai_model || 'gemini-1.5-flash';
 
   // Fetch active unanswered clusters for similarity match
   db.all("SELECT id, representative_question FROM CLUSTERS WHERE status = 'unanswered'", async (err, clusters) => {
@@ -358,25 +372,22 @@ app.post('/api/questions', async (req, res) => {
       // Create new cluster
       const clusterId = 'cluster_' + Date.now() + Math.floor(Math.random() * 100);
       
-      db.serialize(() => {
-        db.run("INSERT INTO CLUSTERS (id, representative_question, category, upvotes, priority_score, status, created_at) VALUES (?, ?, ?, 0, 0.5, 'unanswered', ?)",
-          [clusterId, question_text, category, now]);
-        
-        db.run("INSERT INTO QUESTIONS (id, question_text, category, cluster_id, user_id, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-          [questionId, question_text, category, clusterId, userId, now]);
-
-        // Stage 4: Generate and link AI answer
       try {
+        // Stage 4: Generate and link AI answer asynchronously
         const aiDraft = await generateAIDraftAnswerAsync(question_text, category, activeModel);
+        
         db.serialize(() => {
           db.run("INSERT INTO CLUSTERS (id, representative_question, category, upvotes, priority_score, status, created_at) VALUES (?, ?, ?, 0, 0.5, 'unanswered', ?)",
             [clusterId, question_text, category, now]);
+          
           db.run("INSERT INTO QUESTIONS (id, question_text, category, cluster_id, user_id, created_at) VALUES (?, ?, ?, ?, ?, ?)",
             [questionId, question_text, category, clusterId, userId, now]);
+
           db.run("INSERT INTO ANSWERS (id, cluster_id, answer_text, author_type, user_id, upvotes, created_at) VALUES (?, ?, ?, 'ai', NULL, 0, ?)",
             ['ans_' + clusterId + '_ai', clusterId, aiDraft, now],
             function (err) {
               if (err) return res.status(500).json({ success: false, error: err.message });
+              
               updatePriorityScores(() => {
                 res.status(201).json({
                   success: true,
@@ -391,6 +402,7 @@ app.post('/api/questions', async (req, res) => {
         });
       } catch (aiErr) {
         console.error('[AI Draft Error] Failed in async flow:', aiErr);
+        // Fail-safe flow using synchronous fallback
         const aiDraft = generateAIDraftAnswer(question_text, category);
         db.serialize(() => {
           db.run("INSERT INTO CLUSTERS (id, representative_question, category, upvotes, priority_score, status, created_at) VALUES (?, ?, ?, 0, 0.5, 'unanswered', ?)",
@@ -414,7 +426,6 @@ app.post('/api/questions', async (req, res) => {
           );
         });
       }
-      });
     }
   });
 });
@@ -483,7 +494,6 @@ app.get('/api/moderation/unanswered', (req, res) => {
 
 // Approve answer & Publish (Stage 5 & 6)
 app.post('/api/moderation/approve', (req, res) => {
-  // Begin transaction serialize lock block
   const { cluster_id, approved_answer } = req.body;
   if (!cluster_id || !approved_answer) {
     return res.status(400).json({ success: false, error: 'Cluster ID and approved answer are required.' });
@@ -542,26 +552,65 @@ app.get('/api/faq', (req, res) => {
   });
 });
 
-// Run server
 // Conversational AI Q&A Assistant Search endpoint
 app.post('/api/chat', (req, res) => {
-  res.json({ success: false, answer: 'Initializing...' });
+  const { message } = req.body;
+  if (!message) {
+    return res.status(400).json({ success: false, error: 'Message is required.' });
+  }
+
+  db.all("SELECT id as faq_id, question, answer, category FROM PUBLISHED_FAQ", (err, faqs) => {
+    if (err) return res.status(500).json({ success: false, error: err.message });
+
+    let bestSimilarity = 0.0;
+    let bestFaq = null;
+
+    faqs.forEach(f => {
+      const sim = calculateCosineSimilarity(message, f.question);
+      if (sim > bestSimilarity) {
+        bestSimilarity = sim;
+        bestFaq = f;
+      }
+    });
+
+    if (bestFaq && bestSimilarity > 0.35) {
+      res.json({
+        success: true,
+        answer: bestFaq.answer,
+        matched_question: bestFaq.question,
+        similarity: parseFloat(bestSimilarity.toFixed(3))
+      });
+    } else {
+      res.json({
+        success: false,
+        answer: "I couldn't find a verified answer matching your question in our FAQ database. Would you like to submit this question to our community prioritizing queue?"
+      });
+    }
+  });
 });
 
-  const { message } = req.body;
-  if (!message) return res.status(400).json({ success: false, error: 'Message is required.' });
-  console.log(`Express server successfully running on http://localhost:${PORT}`);
-});
-    console.log(`[Diagnostic] Catch handler triggered for AI draft generation process.`);
 // Git synchronization endpoint
 app.post('/api/git-sync', (req, res) => {
-  res.json({ success: true, message: 'Sync complete' });
-});
-
   const { exec } = require('child_process');
+  
   exec('git push origin main', (error, stdout, stderr) => {
     if (error) {
-      return res.status(500).json({ success: false, message: 'Git sync failed.', details: stderr || error.message });
+      console.error(`Git push error: ${error}`);
+      return res.status(500).json({ 
+        success: false, 
+        message: 'Git sync failed. Verify remote connection and credentials.',
+        details: stderr || error.message 
+      });
     }
-    res.json({ success: true, message: 'Successfully synchronized code changes with remote Git repository.' });
+    res.json({ 
+      success: true, 
+      message: 'Successfully synchronized code changes with remote Git repository.',
+      details: stdout 
+    });
   });
+});
+
+// Run server
+app.listen(PORT, () => {
+  console.log(`Express server successfully running on http://localhost:${PORT}`);
+});
