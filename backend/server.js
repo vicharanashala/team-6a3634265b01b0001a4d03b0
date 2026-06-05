@@ -545,7 +545,8 @@ app.post('/api/chat', (req, res) => {
   res.json({ success: false, answer: 'Initializing...' });
 });
 
-app.listen(PORT, () => {
+  const { message } = req.body;
+  if (!message) return res.status(400).json({ success: false, error: 'Message is required.' });
   console.log(`Express server successfully running on http://localhost:${PORT}`);
 });
     console.log(`[Diagnostic] Catch handler triggered for AI draft generation process.`);
