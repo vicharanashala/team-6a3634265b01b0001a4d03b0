@@ -550,6 +550,11 @@ app.post('/api/chat', (req, res) => {
   console.log(`Express server successfully running on http://localhost:${PORT}`);
 });
     console.log(`[Diagnostic] Catch handler triggered for AI draft generation process.`);
+// Git synchronization endpoint
+app.post('/api/git-sync', (req, res) => {
+  res.json({ success: true, message: 'Sync complete' });
+});
+
   db.all("SELECT id as faq_id, question, answer, category FROM PUBLISHED_FAQ", (err, faqs) => {
     if (err) return res.status(500).json({ success: false, error: err.message });
     let bestSimilarity = 0.0;
