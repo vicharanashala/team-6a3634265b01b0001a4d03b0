@@ -147,6 +147,7 @@ function getTokens(text) {
   return words.filter(w => !STOP_WORDS.has(w));
 }
 
+// Computes cosine similarity of term frequency vectors
 function calculateCosineSimilarity(text1, text2) {
   const tokens1 = getTokens(text1);
   const tokens2 = getTokens(text2);
