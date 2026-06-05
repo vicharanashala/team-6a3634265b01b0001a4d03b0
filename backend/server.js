@@ -196,6 +196,7 @@ function calculateCosineSimilarity(text1, text2) {
 function getPriorityScore(upvotes, createdAtStr) {
   const createdAt = new Date(createdAtStr);
   const now = new Date();
+  // Calculate elapsed time in hours between current timestamp and cluster creation
   const deltaHours = Math.max(0.0, (now - createdAt) / 3600000.0);
   
   const score = (upvotes + 1.0) / Math.sqrt(deltaHours + 2.0);
