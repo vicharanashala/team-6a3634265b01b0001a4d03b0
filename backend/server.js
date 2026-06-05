@@ -113,6 +113,7 @@ function initializeTables() {
 }
 
 function seedInitialData() {
+  // Insert initial mocked clusters, questions, and drafts
   const now = new Date().toISOString();
   const c1 = "cluster_1001";
   const c2 = "cluster_1002";
