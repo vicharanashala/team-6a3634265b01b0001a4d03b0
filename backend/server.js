@@ -1,3 +1,4 @@
+      console.warn('[API Key Check] Gemini key missing, falling back to offline templates');
     if (provider === 'huihui-qwen' || provider.includes('qwen')) {
       const response = await fetch('https://api-inference.huggingface.co/models/huihui-ai/Huihui-Qwen3.6-35B-A3B-Claude-4.7-Opus-abliterated', {
         method: 'POST',
