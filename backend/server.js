@@ -313,6 +313,7 @@ app.post('/api/questions', (req, res) => {
   }
 
   const userId = user_id || 'user_anon';
+  const activeModel = ai_model || 'gemini-1.5-flash';
   const now = new Date().toISOString();
 
   // Fetch active unanswered clusters for similarity match
