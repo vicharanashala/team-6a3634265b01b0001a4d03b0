@@ -769,6 +769,20 @@ export default function App() {
   };
 
   // Clear Audit log stream
+  const handleAdminUnlock = (e) => {
+    e.preventDefault();
+    if (adminPassword === 'admin') {
+      setIsAdminUnlocked(true);
+      setAdminPassword('');
+      setAdminError('');
+      logActivity("SECURITY", "Successfully unlocked Admin Control Panel.");
+      triggerAlert("Welcome to Admin Control Tower.", "success");
+    } else {
+      setAdminError("Invalid administrator passcode. Access Denied.");
+      logActivity("SECURITY", "Failed attempt to unlock Admin Control Panel.");
+    }
+  };
+
   const handleClearLogs = () => {
     setLogs([]);
     triggerAlert("System Activity logs cleared.", "success");
