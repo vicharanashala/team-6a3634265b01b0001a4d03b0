@@ -236,6 +236,7 @@ function generateAIDraftAnswer(questionText, category) {
   // Match keywords related to payments, billing, and receipts
   } else if (text.includes("invoice") || text.includes("bill") || text.includes("receipt") || text.includes("payment")) {
     return `You can find your receipts under Settings -> Invoices. Choose the target billing interval and select the 'Download PDF' button to fetch the document directly. If payments fail, verify your card expiry dates.`;
+  // Match keywords related to terms of service and member rules
   } else if (text.includes("guideline") || text.includes("policy") || text.includes("rule") || text.includes("terms")) {
     return `Community standards dictate that all member inputs be polite, non-advertising, and professional. Post submissions containing offensive content or unverified gossip will be flagged and purged by admins.`;
   } else {
