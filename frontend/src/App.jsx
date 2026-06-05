@@ -454,7 +454,7 @@ export default function App() {
         const res = await fetch('http://localhost:5000/api/questions', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ question_text: questionText, category: cat, user_id: uid })
+          body: JSON.stringify({ question_text: questionText, category: cat, user_id: uid, ai_model: aiEngine })
         });
         const data = await res.json();
         if (data.success) {
