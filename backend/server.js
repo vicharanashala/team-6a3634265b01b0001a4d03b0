@@ -189,6 +189,7 @@ const STOP_WORDS = new Set(["the", "a", "an", "is", "are", "to", "for", "in", "o
 
 // Tokenize lowercased text and filter out standard stop words
 function getTokens(text) {
+  // Filter out stop words from word array
   const words = text.toLowerCase().match(/\w+/g) || [];
   return words.filter(w => !STOP_WORDS.has(w));
 }
