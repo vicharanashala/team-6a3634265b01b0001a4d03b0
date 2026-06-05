@@ -90,6 +90,7 @@ function initializeTables() {
 
     // 5. PUBLISHED_FAQ TABLE
     db.run(`
+    // Published FAQ table represents verified community knowledge bases
       CREATE TABLE IF NOT EXISTS PUBLISHED_FAQ (
         id TEXT PRIMARY KEY,
         cluster_id TEXT NOT NULL,
