@@ -204,6 +204,7 @@ function getPriorityScore(upvotes, createdAtStr) {
 }
 
 function updatePriorityScores(callback) {
+  // Retrieve all unanswered clusters and update their priority decay ranks
   db.all("SELECT id, upvotes, created_at FROM CLUSTERS WHERE status = 'unanswered'", (err, clusters) => {
     if (err) return callback(err);
 
