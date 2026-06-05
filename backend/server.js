@@ -138,6 +138,7 @@ function seedInitialData() {
 // =====================================================================
 // Stage 2: Token-based Cosine Similarity Algorithmic Logic
 // =====================================================================
+// Stop words array to filter out noise from search queries
 const STOP_WORDS = new Set(["the", "a", "an", "is", "are", "to", "for", "in", "on", "at", "my", "how", "what", "where", "why", "do", "i", "can", "reset", "forgot"]);
 
 function getTokens(text) {
