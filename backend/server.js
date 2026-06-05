@@ -141,6 +141,7 @@ function seedInitialData() {
 // Stop words array to filter out noise from search queries
 const STOP_WORDS = new Set(["the", "a", "an", "is", "are", "to", "for", "in", "on", "at", "my", "how", "what", "where", "why", "do", "i", "can", "reset", "forgot"]);
 
+// Tokenize lowercased text and filter out standard stop words
 function getTokens(text) {
   const words = text.toLowerCase().match(/\w+/g) || [];
   return words.filter(w => !STOP_WORDS.has(w));
