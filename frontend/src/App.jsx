@@ -860,6 +860,12 @@ export default function App() {
     }
   };
 
+    } else {
+      setTimeout(() => {
+        setIsSyncing(false);
+        triggerAlert("Successfully synchronized code changes with remote Git repository (Simulated).", "success");
+      }, 2000);
+    }
   const handleClearLogs = () => {
     setLogs([]);
     triggerAlert("System Activity logs cleared.", "success");
