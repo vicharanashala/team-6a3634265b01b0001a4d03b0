@@ -75,6 +75,7 @@ function initializeTables() {
 
     // 4. ANSWERS TABLE
     db.run(`
+    // Answers table contains AI generated drafts and moderator edits
       CREATE TABLE IF NOT EXISTS ANSWERS (
         id TEXT PRIMARY KEY,
         cluster_id TEXT NOT NULL,
