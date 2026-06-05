@@ -192,6 +192,7 @@ function calculateCosineSimilarity(text1, text2) {
 // =====================================================================
 // Stage 3: Priority scoring formula
 // =====================================================================
+// Damped recency decay prioritization score: Score = (upvotes + 1) / sqrt(delta_hours + 2)
 function getPriorityScore(upvotes, createdAtStr) {
   const createdAt = new Date(createdAtStr);
   const now = new Date();
