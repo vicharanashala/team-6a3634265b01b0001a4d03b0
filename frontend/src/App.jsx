@@ -181,10 +181,10 @@ export default function App() {
   // Configurable NLP & Prompt customizer
   const [similarityThreshold, setSimilarityThreshold] = useState(0.85);
   const [decayWeight, setDecayWeight] = useState(0.5);
-  const [aiEngine, setAiEngine] = useState('gpt-4o-mini');
+  const [aiEngine, setAiEngine] = useState('grok-beta');
   const [autoDraft, setAutoDraft] = useState(true);
   const [aiTemperature, setAiTemperature] = useState(0.7);
-  const [promptTemplate, setPromptTemplate] = useState("You are an expert technical support assistant. Formulate a direct, step-by-step resolution for the user's question, keeping the instructions professional, precise, and category-aligned.");
+  const [promptTemplate, setPromptTemplate] = useState("You are an expert technical support assistant powered by xAI Grok. Provide a concise, step-by-step resolution for the user's question, keeping instructions professional, precise, and category-aligned.");
 
   // Connections
   const [isConnected, setIsConnected] = useState(false);
@@ -259,17 +259,57 @@ export default function App() {
     ]
   };
 
-  // Initializing mock database fallbacks
+  // Initializing — load live data first, fall back to mock if backend is down
   useEffect(() => {
-    setClusters(defaultClusters);
-    setFaqs(defaultFaqs);
+    // Immediately try to fetch live data from backend
+    const bootstrap = async () => {
+      try {
+        const [faqRes, qRes, modRes] = await Promise.all([
+          fetch('http://localhost:5000/api/faq', { signal: AbortSignal.timeout(5000) }),
+          fetch('http://localhost:5000/api/questions', { signal: AbortSignal.timeout(5000) }),
+          fetch('http://localhost:5000/api/moderation/unanswered', { signal: AbortSignal.timeout(5000) })
+        ]);
+
+        if (faqRes.ok && qRes.ok && modRes.ok) {
+          const [faqData, qData, modData] = await Promise.all([
+            faqRes.json(), qRes.json(), modRes.json()
+          ]);
+
+          // Merge ai_draft_answer into clusters
+          const draftMap = {};
+          if (Array.isArray(modData)) modData.forEach(m => { draftMap[m.id] = m.ai_draft_answer; });
+
+          if (Array.isArray(qData)) {
+            const merged = qData.map(c => ({
+              ...c,
+              status: c.status || 'unanswered',
+              ai_draft_answer: draftMap[c.id] || ''
+            }));
+            setClusters(merged);
+          }
+          if (Array.isArray(faqData)) setFaqs(faqData);
+
+          setIsConnected(true);
+          triggerAlert('Connected to live backend. Live data loaded.', 'success');
+          logActivity('SYSTEM', 'Live backend connected. Clusters and FAQs loaded from database.');
+          return; // success — skip mock
+        }
+      } catch (e) {
+        console.warn('[Bootstrap] Backend unreachable, loading mock data:', e.message);
+      }
+
+      // Backend down — use mock data
+      setClusters(defaultClusters);
+      setFaqs(defaultFaqs);
+      setIsConnected(false);
+      triggerAlert('Live API Offline. Running in Simulation Mode.', 'info');
+    };
+
     setLogs(defaultLogs);
     setCommunityAnswers(defaultCommAns);
-
-    // Auto-login a default user to keep the UX smooth, but allow logout!
     setCurrentUser({ username: "ganeshprabu_bo", email: "ganesh@crowdfaq.com", bio: "Team Lead & PM", badge: "FAQ Architect", color: "text-amber-400" });
 
-    checkApiConnection();
+    bootstrap();
 
     // CPU and RAM fluctuating mock
     const diagnosticInterval = setInterval(() => {
@@ -277,7 +317,9 @@ export default function App() {
       setRamUsage(Math.floor(38 + Math.random() * 5));
     }, 4000);
 
-    return () => clearInterval(diagnosticInterval);
+    return () => {
+      clearInterval(diagnosticInterval);
+    };
   }, []);
 
   // Live semantic search simulation as the user types
@@ -302,23 +344,24 @@ export default function App() {
     }
   }, [newQuestion, clusters]);
 
-  // Syncing priority scores dynamically for local database mock representation
+  // Recalculate priority scores locally only when in simulation mode (not connected)
   useEffect(() => {
-    if (!isConnected && clusters.length > 0) {
-      const updated = clusters.map(c => {
-        if (c.status === 'unanswered') {
-          return {
-            ...c,
-            priority_score: getPriorityScore(c.upvotes, c.created_at, decayWeight)
-          };
-        }
-        return c;
-      }).sort((a, b) => b.priority_score - a.priority_score);
-      
-      const scoresChanged = updated.some((c, idx) => c.priority_score !== clusters[idx]?.priority_score);
-      if (scoresChanged) {
-        setClusters(updated);
+    if (isConnected) return; // live backend handles priority scores — don't overwrite
+    if (clusters.length === 0) return;
+
+    const updated = clusters.map(c => {
+      if (c.status === 'unanswered' || !c.status) {
+        return {
+          ...c,
+          priority_score: getPriorityScore(c.upvotes, c.created_at, decayWeight)
+        };
       }
+      return c;
+    }).sort((a, b) => b.priority_score - a.priority_score);
+
+    const scoresChanged = updated.some((c, idx) => c.priority_score !== clusters[idx]?.priority_score);
+    if (scoresChanged) {
+      setClusters(updated);
     }
   }, [clusters, isConnected, decayWeight]);
 
@@ -329,16 +372,16 @@ export default function App() {
 
   const checkApiConnection = async () => {
     try {
-      const res = await fetch(`http://localhost:5000/api/faq`);
+      const res = await fetch(`http://localhost:5000/api/faq`, { signal: AbortSignal.timeout(5000) });
       if (res.ok) {
         setIsConnected(true);
         triggerAlert("Connected to live Express backend API server.", "success");
         fetchLiveFaqs();
         fetchLiveQuestions();
       } else {
-        throw new Error();
+        throw new Error(`HTTP ${res.status}`);
       }
-    } catch {
+    } catch (err) {
       setIsConnected(false);
       triggerAlert("Live API Offline. Running in High-Fidelity Simulation Mode.", "info");
     }
@@ -348,15 +391,32 @@ export default function App() {
     try {
       const res = await fetch(`http://localhost:5000/api/faq?search=${search}`);
       const data = await res.json();
-      setFaqs(data);
+      if (Array.isArray(data)) setFaqs(data);
     } catch {}
   };
 
   const fetchLiveQuestions = async () => {
     try {
-      const res = await fetch('http://localhost:5000/api/questions');
-      const data = await res.json();
-      setClusters(data);
+      // Fetch both the priority list AND the moderation queue (which includes ai_draft_answer)
+      const [qRes, modRes] = await Promise.all([
+        fetch('http://localhost:5000/api/questions'),
+        fetch('http://localhost:5000/api/moderation/unanswered')
+      ]);
+      const qData   = await qRes.json();
+      const modData = await modRes.json();
+
+      if (Array.isArray(qData) && Array.isArray(modData)) {
+        // Merge ai_draft_answer from moderation endpoint into clusters
+        const draftMap = {};
+        modData.forEach(m => { draftMap[m.id] = m.ai_draft_answer; });
+        const merged = qData.map(c => ({
+          ...c,
+          ai_draft_answer: draftMap[c.id] || c.ai_draft_answer || ''
+        }));
+        setClusters(merged);
+      } else if (Array.isArray(qData)) {
+        setClusters(qData);
+      }
     } catch {}
   };
 
@@ -446,77 +506,68 @@ export default function App() {
     const cat = newCategory;
     const uid = currentUser.username;
 
-    if (isConnected) {
-      try {
-        const res = await fetch('http://localhost:5000/api/questions', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ question_text: questionText, category: cat, user_id: uid, ai_model: aiEngine })
-        });
-        const data = await res.json();
-        if (data.success) {
-          triggerAlert(data.message, 'success');
-          setNewQuestion('');
-          fetchLiveQuestions();
-          setUserTab('submit-vote');
-        } else {
-          triggerAlert(data.error, 'error');
-        }
-      } catch {
-        triggerAlert("Error communicating with backend API.", "error");
-      }
-    } else {
-      // High-Fidelity Local Simulation Mode (Stage 2 similarity checking)
-      let bestSimilarity = liveMatch.sim;
-      let bestCluster = liveMatch.cluster;
-
-      if (bestCluster && bestSimilarity > similarityThreshold) {
-        // Merge into cluster
-        const updated = clusters.map(c => {
-          if (c.id === bestCluster.id) {
-            return {
-              ...c,
-              upvotes: c.upvotes + 1
-            };
-          }
-          return c;
-        });
-        setClusters(updated);
-        logActivity("DEDUPLICATION", `Matched question "${questionText.substring(0, 30)}..." to cluster [${bestCluster.id}] (Sim: ${bestSimilarity.toFixed(2)} > Threshold: ${similarityThreshold}). Merged.`);
-        triggerAlert(`Question matched cluster '${bestCluster.id}' (Similarity: ${bestSimilarity.toFixed(2)}). Automatically merged.`, 'success');
+    // Always try the live API first
+    try {
+      const res = await fetch('http://localhost:5000/api/questions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question_text: questionText, category: cat, user_id: uid, custom_prompt: promptTemplate }),
+        signal: AbortSignal.timeout(30000)
+      });
+      const data = await res.json();
+      if (data.success) {
+        if (!isConnected) setIsConnected(true);
+        triggerAlert(data.message, 'success');
+        setNewQuestion('');
+        logActivity("SUBMIT", `[LIVE] ${data.is_new ? 'New cluster' : 'Merged'} — "${questionText.substring(0, 45)}…"  sim=${data.similarity}`);
+        if (data.is_new) logActivity("AI_DRAFT", `Grok draft generated for cluster [${data.cluster_id}]`);
+        await fetchLiveQuestions();
+        setUserTab('submit-vote');
+        return;
       } else {
-        // Start a new cluster
-        const newId = `c_${Date.now()}`;
-        const newClust = {
-          id: newId,
-          representative_question: questionText,
-          category: cat,
-          upvotes: 0,
-          priority_score: 0.5,
-          created_at: new Date().toISOString(),
-          status: 'unanswered',
-          ai_draft_answer: autoDraft ? generateAIDraftAnswer(questionText, cat, promptTemplate) : "AI Generation disabled in configuration.",
-          views: 1
-        };
-        setClusters(prev => [newClust, ...prev]);
-
-        // Increment user contribution metrics
-        setContributors(prev => prev.map(u => {
-          if (u.name === `@${currentUser.username}`) {
-            return { ...u, count: u.count + 1 };
-          }
-          return u;
-        }));
-
-        logActivity("SUBMIT", `Created new cluster [${newId}] - Category: [${cat}] - Text: "${questionText.substring(0, 45)}..."`);
-        if (autoDraft) {
-          logActivity("AI_DRAFT", `Drafted response for cluster [${newId}] using engine: [${aiEngine}] and customized Prompt guidelines.`);
-        }
-        triggerAlert("No similar questions found. Started new cluster & generated AI draft.", "success");
+        triggerAlert(data.error || 'Submission failed.', 'error');
+        return;
       }
-      setNewQuestion('');
-      setUserTab('submit-vote');
+    } catch (err) {
+      // Live API failed — fall through to simulation mode
+      console.warn('[Submit] Live API unreachable, using simulation:', err.message);
+      setIsConnected(false);
     }
+
+    // ── Simulation fallback ───────────────────────────────────────────────────
+    let bestSimilarity = liveMatch.sim;
+    let bestCluster = liveMatch.cluster;
+
+    if (bestCluster && bestSimilarity > similarityThreshold) {
+      const updated = clusters.map(c =>
+        c.id === bestCluster.id ? { ...c, upvotes: c.upvotes + 1 } : c
+      );
+      setClusters(updated);
+      logActivity("DEDUPLICATION", `Merged "${questionText.substring(0, 30)}…" into [${bestCluster.id}] (sim: ${bestSimilarity.toFixed(2)})`);
+      triggerAlert(`Merged into existing cluster (Similarity: ${bestSimilarity.toFixed(2)}).`, 'success');
+    } else {
+      const newId = `c_${Date.now()}`;
+      const newClust = {
+        id: newId,
+        representative_question: questionText,
+        category: cat,
+        upvotes: 0,
+        priority_score: 0.5,
+        created_at: new Date().toISOString(),
+        status: 'unanswered',
+        ai_draft_answer: autoDraft ? generateAIDraftAnswer(questionText, cat, promptTemplate) : "AI Generation disabled.",
+        views: 1
+      };
+      setClusters(prev => [newClust, ...prev]);
+      setContributors(prev => prev.map(u =>
+        u.name === `@${currentUser.username}` ? { ...u, count: u.count + 1 } : u
+      ));
+      logActivity("SUBMIT", `[SIM] New cluster [${newId}] — "${questionText.substring(0, 45)}…"`);
+      if (autoDraft) logActivity("AI_DRAFT", `Simulated draft for [${newId}] via [${aiEngine}]`);
+      triggerAlert("New cluster created with AI draft (simulation mode).", "success");
+    }
+    setNewQuestion('');
+    setUserTab('submit-vote');
   };
 
   // Upvote Handler
@@ -527,52 +578,40 @@ export default function App() {
       return;
     }
 
-    if (isConnected) {
-      try {
-        const res = await fetch('http://localhost:5000/api/votes', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            cluster_id: clusterId,
-            user_id: currentUser.username
-          })
-        });
-        const data = await res.json();
-        if (data.success) {
-          triggerAlert("Upvote registered.", "success");
-          fetchLiveQuestions();
-        } else {
-          triggerAlert(data.error, "error");
-        }
-      } catch {
-        triggerAlert("Upvote failed.", "error");
-      }
-    } else {
-      // Local Mock Upvoting
-      const updated = clusters.map(c => {
-        if (c.id === clusterId) {
-          const newVotes = c.upvotes + 1;
-          return {
-            ...c,
-            upvotes: newVotes,
-            priority_score: getPriorityScore(newVotes, c.created_at, decayWeight)
-          };
-        }
-        return c;
+    try {
+      const res = await fetch('http://localhost:5000/api/votes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cluster_id: clusterId, user_id: currentUser.username }),
+        signal: AbortSignal.timeout(10000)
       });
-      setClusters(updated);
-
-      // Increment user vote metrics
-      setContributors(prev => prev.map(u => {
-        if (u.name === `@${currentUser.username}`) {
-          return { ...u, votes: u.votes + 1 };
-        }
-        return u;
-      }));
-
-      logActivity("VOTE", `Upvoted cluster [${clusterId}]. Recalculated Priority Score with decay [${decayWeight}]`);
-      triggerAlert("Upvote registered. Recalculated Priority Score.", "success");
+      const data = await res.json();
+      if (data.success) {
+        triggerAlert("Upvote registered.", "success");
+        fetchLiveQuestions();
+        return;
+      } else {
+        triggerAlert(data.error, "error");
+        return;
+      }
+    } catch {
+      // Simulation fallback
     }
+
+    // Local mock fallback
+    const updated = clusters.map(c => {
+      if (c.id === clusterId) {
+        const newVotes = c.upvotes + 1;
+        return { ...c, upvotes: newVotes, priority_score: getPriorityScore(newVotes, c.created_at, decayWeight) };
+      }
+      return c;
+    });
+    setClusters(updated);
+    setContributors(prev => prev.map(u =>
+      u.name === `@${currentUser.username}` ? { ...u, votes: u.votes + 1 } : u
+    ));
+    logActivity("VOTE", `[SIM] Upvoted cluster [${clusterId}]`);
+    triggerAlert("Upvote registered (simulation).", "success");
   };
 
   // Submit community answer draft to cluster
@@ -635,47 +674,49 @@ export default function App() {
     logActivity("VOTE", `Downvoted community answer [${answerId}] inside cluster [${clusterId}]`);
   };
 
-  // Admin Publish/Approve Handler (can approve AI draft OR select one of the community answers!)
+  // Admin Publish/Approve Handler
   const handleApprovePublish = async (clusterId, finalAnswer) => {
     if (!finalAnswer.trim()) {
       triggerAlert("Answer cannot be empty.", "error");
       return;
     }
 
-    if (isConnected) {
-      try {
-        const res = await fetch('http://localhost:5000/api/moderation/approve', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ cluster_id: clusterId, approved_answer: finalAnswer })
-        });
-        const data = await res.json();
-        if (data.success) {
-          triggerAlert("FAQ Published successfully.", "success");
-          fetchLiveQuestions();
-          fetchLiveFaqs();
-        } else {
-          triggerAlert(data.error, "error");
-        }
-      } catch {
-        triggerAlert("Approval process encountered an error.", "error");
+    try {
+      const res = await fetch('http://localhost:5000/api/moderation/approve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cluster_id: clusterId, approved_answer: finalAnswer }),
+        signal: AbortSignal.timeout(10000)
+      });
+      const data = await res.json();
+      if (data.success) {
+        triggerAlert("FAQ Published successfully.", "success");
+        logActivity("PUBLISH", `[LIVE] Published cluster [${clusterId}] → FAQ [${data.faq_id}]`);
+        fetchLiveQuestions();
+        fetchLiveFaqs();
+        return;
+      } else {
+        triggerAlert(data.error, "error");
+        return;
       }
-    } else {
-      // Local mock publish
-      const cluster = clusters.find(c => c.id === clusterId);
-      if (cluster) {
-        const newFaq = {
-          faq_id: `faq_${Date.now()}`,
-          question: cluster.representative_question,
-          answer: finalAnswer,
-          category: cluster.category,
-          published_at: new Date().toISOString()
-        };
-        setFaqs(prev => [newFaq, ...prev]);
-        setClusters(prev => prev.filter(c => c.id !== clusterId));
-        logActivity("PUBLISH", `Published cluster [${clusterId}] to public FAQ repository.`);
-        triggerAlert("Answer approved! Published to public Knowledge Base.", "success");
-      }
+    } catch {
+      // Simulation fallback
+    }
+
+    // Local mock publish
+    const cluster = clusters.find(c => c.id === clusterId);
+    if (cluster) {
+      const newFaq = {
+        faq_id: `faq_${Date.now()}`,
+        question: cluster.representative_question,
+        answer: finalAnswer,
+        category: cluster.category,
+        published_at: new Date().toISOString()
+      };
+      setFaqs(prev => [newFaq, ...prev]);
+      setClusters(prev => prev.filter(c => c.id !== clusterId));
+      logActivity("PUBLISH", `[SIM] Published cluster [${clusterId}] to FAQ.`);
+      triggerAlert("Answer approved! Published to public Knowledge Base (simulation).", "success");
     }
   };
 
@@ -1511,14 +1552,14 @@ export default function App() {
                   </div>
 
                   <div className="flex flex-col gap-4 mt-2">
-                    {clusters.filter(c => c.status === 'unanswered' && followedTags.includes(c.category)).length === 0 ? (
+                    {clusters.filter(c => (c.status === 'unanswered' || !c.status) && followedTags.includes(c.category)).length === 0 ? (
                       <div className="text-center text-gray-500 py-16 bg-dark-900/25 rounded-2xl border border-white/5">
                         <Award className="w-12 h-12 text-gray-700 mx-auto mb-3" />
                         <p className="text-sm font-semibold">Feed is empty.</p>
                         <p className="text-xs text-gray-600 mt-1">Try following more Category tag subscriptions above!</p>
                       </div>
                     ) : (
-                      clusters.filter(c => c.status === 'unanswered' && followedTags.includes(c.category)).map(c => {
+                      clusters.filter(c => (c.status === 'unanswered' || !c.status) && followedTags.includes(c.category)).map(c => {
                         const isExpanded = expandedCluster === c.id;
                         const commAnsList = communityAnswers[c.id] || [];
 
@@ -1689,7 +1730,7 @@ export default function App() {
                       Open Priorities
                     </span>
                     <h3 className="text-3xl font-extrabold font-outfit text-white">
-                      {clusters.filter(c => c.status === 'unanswered').length}
+                      {clusters.filter(c => c.status === 'unanswered' || !c.status).length}
                     </h3>
                     <p className="text-[10px] text-gray-400">Unanswered question clusters</p>
                   </div>
@@ -2165,14 +2206,14 @@ export default function App() {
                     </div>
 
                     <div className="flex flex-col gap-5">
-                      {clusters.filter(c => c.status === 'unanswered').length === 0 ? (
+                      {clusters.filter(c => c.status === 'unanswered' || !c.status).length === 0 ? (
                         <div className="text-center text-gray-500 py-16 bg-dark-900/25 rounded-2xl border border-white/5">
                           <Check className="w-12 h-12 text-green-500 mx-auto mb-3" />
                           <p className="text-sm font-semibold">Moderation pipeline is empty.</p>
                           <p className="text-xs text-gray-600 mt-1">All community questions are happily answered and published!</p>
                         </div>
                       ) : (
-                        clusters.filter(c => c.status === 'unanswered').map(c => (
+                        clusters.filter(c => c.status === 'unanswered' || !c.status).map(c => (
                           <CurationCard 
                             key={c.id}
                             cluster={c}
@@ -2377,19 +2418,18 @@ export default function App() {
 
                       {/* AI Model selector */}
                       <div className="flex flex-col gap-1 mt-1">
-                        <span className="text-gray-400 font-semibold">AI Assistant LLM Agent:</span>
+                        <span className="text-gray-400 font-semibold">AI Assistant LLM Agent (xAI Grok):</span>
                         <select 
                           value={aiEngine}
                           onChange={e => {
                             setAiEngine(e.target.value);
-                            logActivity("CONFIG", `Active generative LLM Engine switched to [${e.target.value}]`);
+                            logActivity("CONFIG", `Active Grok model switched to [${e.target.value}]`);
                           }}
                           className="w-full bg-dark-950 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500 font-medium"
                         >
-                          <option value="gpt-4o-mini">gpt-4o-mini (default)</option>
-                          <option value="claude-3-5-sonnet">claude-3-5-sonnet</option>
-                          <option value="deepseek-r1-distill">deepseek-r1-distill</option>
-                          <option value="llama-3.1-70b-instruct">llama-3.1-70b-instruct</option>
+                          <option value="grok-beta">grok-beta (default)</option>
+                          <option value="grok-2">grok-2</option>
+                          <option value="grok-3">grok-3</option>
                         </select>
                       </div>
 
