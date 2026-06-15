@@ -10,13 +10,189 @@ const PORT = process.env.PORT || 5000;
 app.use(cors());
 app.use(express.json());
 
+// FailoverDatabase class to wrap sqlite3.Database and support automated failover
+class FailoverDatabase {
+  constructor(primaryPath, backupPath) {
+    this.primaryPath = primaryPath;
+    this.backupPath = backupPath;
+    this.currentPath = primaryPath;
+    this.connection = null;
+    this.isBackupActive = false;
+    this.onFailover = null;
+  }
+
+  connect(callback) {
+    this.connection = new sqlite3.Database(this.currentPath, (err) => {
+      if (err) {
+        console.error(`[FailoverDatabase] Connection failed for ${this.currentPath}:`, err.message);
+        if (!this.isBackupActive) {
+          this.switchToBackup(callback);
+        } else if (callback) {
+          callback(err);
+        }
+      } else {
+        console.log(`[FailoverDatabase] Successfully connected to database at: ${this.currentPath}`);
+        if (callback) callback(null);
+      }
+    });
+  }
+
+  switchToBackup(callback) {
+    this.isBackupActive = true;
+    this.currentPath = this.backupPath;
+    console.warn(`[FAILOVER] Switching database from primary to backup: ${this.backupPath}`);
+    
+    if (this.connection) {
+      try {
+        this.connection.close();
+      } catch (closeErr) {
+        console.error('[FailoverDatabase] Error closing database connection:', closeErr.message);
+      }
+    }
+
+    this.connect((err) => {
+      if (err) {
+        console.error('[FailoverDatabase] Connection to backup database failed:', err.message);
+        if (callback) callback(err);
+      } else {
+        console.log('[FailoverDatabase] Backup database connected. Initializing tables...');
+        if (this.onFailover) {
+          this.onFailover();
+        }
+        if (callback) callback(null);
+      }
+    });
+  }
+
+  _isFailoverError(err) {
+    if (!err) return false;
+    const msg = err.message || '';
+    return msg.includes('SQLITE_CORRUPT') || 
+           msg.includes('SQLITE_IOERR') || 
+           msg.includes('SQLITE_CANTOPEN') || 
+           msg.includes('SQLITE_READONLY') ||
+           msg.includes('SQLITE_BUSY') ||
+           msg.includes('SQLITE_LOCKED') ||
+           msg.includes('database is locked') ||
+           msg.includes('disk I/O error') ||
+           msg.includes('unable to open database file');
+  }
+
+  run(sql, params, callback) {
+    if (typeof params === 'function') {
+      callback = params;
+      params = [];
+    }
+    
+    if (!this.connection) {
+      const err = new Error('Database not connected');
+      if (callback) return callback(err);
+      throw err;
+    }
+
+    this.connection.run(sql, params, (err) => {
+      if (err && this._isFailoverError(err) && !this.isBackupActive) {
+        console.warn(`[FailoverDatabase] Error in run: "${err.message}". Initiating failover...`);
+        this.switchToBackup((failoverErr) => {
+          if (failoverErr) {
+            if (callback) callback(err);
+          } else {
+            console.log('[FailoverDatabase] Retrying query on backup database...');
+            this.connection.run(sql, params, callback);
+          }
+        });
+      } else {
+        if (callback) callback(err);
+      }
+    });
+  }
+
+  get(sql, params, callback) {
+    if (typeof params === 'function') {
+      callback = params;
+      params = [];
+    }
+
+    if (!this.connection) {
+      const err = new Error('Database not connected');
+      if (callback) return callback(err);
+      throw err;
+    }
+
+    this.connection.get(sql, params, (err, row) => {
+      if (err && this._isFailoverError(err) && !this.isBackupActive) {
+        console.warn(`[FailoverDatabase] Error in get: "${err.message}". Initiating failover...`);
+        this.switchToBackup((failoverErr) => {
+          if (failoverErr) {
+            if (callback) callback(err);
+          } else {
+            console.log('[FailoverDatabase] Retrying query on backup database...');
+            this.connection.get(sql, params, callback);
+          }
+        });
+      } else {
+        if (callback) callback(err, row);
+      }
+    });
+  }
+
+  all(sql, params, callback) {
+    if (typeof params === 'function') {
+      callback = params;
+      params = [];
+    }
+
+    if (!this.connection) {
+      const err = new Error('Database not connected');
+      if (callback) return callback(err);
+      throw err;
+    }
+
+    this.connection.all(sql, params, (err, rows) => {
+      if (err && this._isFailoverError(err) && !this.isBackupActive) {
+        console.warn(`[FailoverDatabase] Error in all: "${err.message}". Initiating failover...`);
+        this.switchToBackup((failoverErr) => {
+          if (failoverErr) {
+            if (callback) callback(err);
+          } else {
+            console.log('[FailoverDatabase] Retrying query on backup database...');
+            this.connection.all(sql, params, callback);
+          }
+        });
+      } else {
+        if (callback) callback(err, rows);
+      }
+    });
+  }
+
+  serialize(callback) {
+    if (this.connection) {
+      this.connection.serialize(callback);
+    }
+  }
+
+  forceFailover(callback) {
+    if (this.isBackupActive) {
+      if (callback) callback(new Error('Already on backup database'));
+      return;
+    }
+    this.switchToBackup(callback);
+  }
+}
+
 // Initialize Database
 const dbPath = path.join(__dirname, 'database.sqlite');
-const db = new sqlite3.Database(dbPath, (err) => {
+const backupDbPath = path.join(__dirname, 'database_backup.sqlite');
+const db = new FailoverDatabase(dbPath, backupDbPath);
+
+db.onFailover = () => {
+  initializeTables();
+};
+
+db.connect((err) => {
   if (err) {
     console.error('Database connection error:', err.message);
   } else {
-    console.log('Connected to SQLite database at:', dbPath);
     initializeTables();
   }
 });
@@ -25,7 +201,31 @@ function initializeTables() {
   db.serialize(() => {
     db.run("PRAGMA foreign_keys = ON;");
 
-    // 1. CLUSTERS TABLE
+    // 1. USERS TABLE
+    db.run(`
+      CREATE TABLE IF NOT EXISTS USERS (
+        username TEXT PRIMARY KEY,
+        email TEXT NOT NULL,
+        points INTEGER DEFAULT 100,
+        emergency_tokens INTEGER DEFAULT 3,
+        role TEXT DEFAULT 'Community Member',
+        badge TEXT DEFAULT 'Scholar',
+        color TEXT DEFAULT 'text-blue-400'
+      )
+    `);
+
+    // 2. ADMIN_NOTIFICATIONS TABLE
+    db.run(`
+      CREATE TABLE IF NOT EXISTS ADMIN_NOTIFICATIONS (
+        id TEXT PRIMARY KEY,
+        message TEXT NOT NULL,
+        cluster_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        resolved INTEGER DEFAULT 0
+      )
+    `);
+
+    // 3. CLUSTERS TABLE
     db.run(`
       CREATE TABLE IF NOT EXISTS CLUSTERS (
         id TEXT PRIMARY KEY,
@@ -36,9 +236,17 @@ function initializeTables() {
         status TEXT DEFAULT 'unanswered',
         created_at TEXT NOT NULL
       )
-    `);
+    `, () => {
+      // Safe Alter Columns
+      db.run("ALTER TABLE CLUSTERS ADD COLUMN is_emergency INTEGER DEFAULT 0", (err) => {
+        // Ignore error if column already exists
+      });
+      db.run("ALTER TABLE CLUSTERS ADD COLUMN emergency_resolved INTEGER DEFAULT 0", (err) => {
+        // Ignore error if column already exists
+      });
+    });
 
-    // 2. QUESTIONS TABLE
+    // 4. QUESTIONS TABLE
     db.run(`
       CREATE TABLE IF NOT EXISTS QUESTIONS (
         id TEXT PRIMARY KEY,
@@ -51,7 +259,7 @@ function initializeTables() {
       )
     `);
 
-    // 3. VOTES TABLE
+    // 5. VOTES TABLE
     db.run(`
       CREATE TABLE IF NOT EXISTS VOTES (
         id TEXT PRIMARY KEY,
@@ -63,7 +271,7 @@ function initializeTables() {
       )
     `);
 
-    // 4. ANSWERS TABLE
+    // 6. ANSWERS TABLE
     db.run(`
       CREATE TABLE IF NOT EXISTS ANSWERS (
         id TEXT PRIMARY KEY,
@@ -75,9 +283,13 @@ function initializeTables() {
         created_at TEXT NOT NULL,
         FOREIGN KEY(cluster_id) REFERENCES CLUSTERS(id) ON DELETE CASCADE
       )
-    `);
+    `, () => {
+      db.run("ALTER TABLE ANSWERS ADD COLUMN downvotes INTEGER DEFAULT 0", (err) => {
+        // Ignore error if column already exists
+      });
+    });
 
-    // 5. PUBLISHED_FAQ TABLE
+    // 7. PUBLISHED_FAQ TABLE
     db.run(`
       CREATE TABLE IF NOT EXISTS PUBLISHED_FAQ (
         id TEXT PRIMARY KEY,
@@ -88,6 +300,17 @@ function initializeTables() {
         published_at TEXT NOT NULL
       )
     `);
+
+    // Seed initial users if empty
+    db.get("SELECT COUNT(*) as count FROM USERS", (err, row) => {
+      if (row && row.count === 0) {
+        console.log('Seeding initial users...');
+        db.run(`INSERT INTO USERS (username, email, points, emergency_tokens, role, badge, color) VALUES ('ganeshprabu_bo', 'ganesh@crowdfaq.com', 120, 3, 'Team Lead', 'FAQ Architect', 'text-amber-400')`);
+        db.run(`INSERT INTO USERS (username, email, points, emergency_tokens, role, badge, color) VALUES ('chaitanya_ram', 'chaitanya@crowdfaq.com', 80, 3, 'FE Developer', 'UI Curator', 'text-blue-400')`);
+        db.run(`INSERT INTO USERS (username, email, points, emergency_tokens, role, badge, color) VALUES ('ritzy_george', 'ritzy@crowdfaq.com', 60, 3, 'Moderator', 'Review Expert', 'text-indigo-400')`);
+        db.run(`INSERT INTO USERS (username, email, points, emergency_tokens, role, badge, color) VALUES ('mohd_warish', 'warish@crowdfaq.com', 50, 3, 'Backend Dev', 'Sync Builder', 'text-green-400')`);
+      }
+    });
 
     // Insert Seed Data if database is completely empty
     db.get("SELECT COUNT(*) as count FROM CLUSTERS", (err, row) => {
@@ -321,9 +544,182 @@ Draft Answer:`
 // REST API Endpoint Routing
 // =====================================================================
 
+// =====================================================================
+// REST API Endpoint Routing
+// =====================================================================
+
+// User registration / login / session auth
+app.post('/api/users/auth', (req, res) => {
+  const { username, email, role, badge, color } = req.body;
+  if (!username) {
+    return res.status(400).json({ success: false, error: 'Username is required.' });
+  }
+
+  db.get("SELECT * FROM USERS WHERE username = ?", [username], (err, row) => {
+    if (err) return res.status(500).json({ success: false, error: err.message });
+
+    if (row) {
+      return res.json({ success: true, user: row });
+    } else {
+      const defaultEmail = email || `${username}@crowdfaq.com`;
+      const defaultRole = role || 'Community Member';
+      const defaultBadge = badge || 'Scholar';
+      const defaultColor = color || 'text-blue-400';
+
+      db.run(
+        "INSERT INTO USERS (username, email, points, emergency_tokens, role, badge, color) VALUES (?, ?, 100, 3, ?, ?, ?)",
+        [username, defaultEmail, defaultRole, defaultBadge, defaultColor],
+        function (err) {
+          if (err) return res.status(500).json({ success: false, error: err.message });
+          
+          db.get("SELECT * FROM USERS WHERE username = ?", [username], (err, newRow) => {
+            if (err) return res.status(500).json({ success: false, error: err.message });
+            res.status(201).json({ success: true, user: newRow });
+          });
+        }
+      );
+    }
+  });
+});
+
+// Get all users (leaderboard)
+app.get('/api/users', (req, res) => {
+  db.all("SELECT username, email, points, emergency_tokens, role, badge, color FROM USERS ORDER BY points DESC", (err, rows) => {
+    if (err) return res.status(500).json({ success: false, error: err.message });
+    res.json(rows);
+  });
+});
+
+// Submit a community answer to a cluster
+app.post('/api/clusters/:clusterId/answers', (req, res) => {
+  const { clusterId } = req.params;
+  const { answer_text, user_id } = req.body;
+  if (!answer_text || !user_id) {
+    return res.status(400).json({ success: false, error: 'Answer text and user ID are required.' });
+  }
+
+  const answerId = 'ans_' + Date.now() + Math.floor(Math.random() * 1000);
+  const now = new Date().toISOString();
+
+  db.run(
+    "INSERT INTO ANSWERS (id, cluster_id, answer_text, author_type, user_id, upvotes, downvotes, created_at) VALUES (?, ?, ?, 'user', ?, 0, 0, ?)",
+    [answerId, clusterId, answer_text, user_id, now],
+    function (err) {
+      if (err) return res.status(500).json({ success: false, error: err.message });
+
+      // Award +10 points for contributing
+      if (user_id !== 'user_anon') {
+        db.run("UPDATE USERS SET points = points + 10 WHERE username = ?", [user_id]);
+      }
+
+      res.status(201).json({
+        success: true,
+        message: 'Community answer draft submitted successfully. Earned 10 points!',
+        answer_id: answerId
+      });
+    }
+  );
+});
+
+// Get answers for a cluster
+app.get('/api/clusters/:clusterId/answers', (req, res) => {
+  const { clusterId } = req.params;
+  db.all(
+    "SELECT id, cluster_id, answer_text, author_type, user_id, upvotes, downvotes, created_at FROM ANSWERS WHERE cluster_id = ? ORDER BY upvotes DESC, created_at DESC",
+    [clusterId],
+    (err, rows) => {
+      if (err) return res.status(500).json({ success: false, error: err.message });
+      res.json(rows);
+    }
+  );
+});
+
+// Vote on an answer
+app.post('/api/answers/:answerId/vote', (req, res) => {
+  const { answerId } = req.params;
+  const { type, user_id } = req.body;
+  if (!type || !user_id) {
+    return res.status(400).json({ success: false, error: 'Vote type and user ID are required.' });
+  }
+
+  const voteCol = type === 'upvote' ? 'upvotes' : 'downvotes';
+
+  db.get("SELECT user_id, author_type FROM ANSWERS WHERE id = ?", [answerId], (err, answer) => {
+    if (err || !answer) {
+      return res.status(404).json({ success: false, error: 'Answer not found.' });
+    }
+
+    db.run(`UPDATE ANSWERS SET ${voteCol} = ${voteCol} + 1 WHERE id = ?`, [answerId], function(err) {
+      if (err) return res.status(500).json({ success: false, error: err.message });
+
+      // Award points
+      if (type === 'upvote') {
+        if (answer.author_type === 'user' && answer.user_id && answer.user_id !== 'user_anon') {
+          db.run("UPDATE USERS SET points = points + 2 WHERE username = ?", [answer.user_id]);
+        }
+        if (user_id !== 'user_anon') {
+          db.run("UPDATE USERS SET points = points + 1 WHERE username = ?", [user_id]);
+        }
+      }
+
+      res.json({ success: true, message: 'Answer vote registered.' });
+    });
+  });
+});
+
+// Reject cluster as useless / spam & penalize creator
+app.post('/api/moderation/flag-useless', (req, res) => {
+  const { cluster_id } = req.body;
+  if (!cluster_id) {
+    return res.status(400).json({ success: false, error: 'Cluster ID is required.' });
+  }
+
+  db.all("SELECT DISTINCT user_id FROM QUESTIONS WHERE cluster_id = ?", [cluster_id], (err, rows) => {
+    if (err) return res.status(500).json({ success: false, error: err.message });
+
+    const creators = rows.map(r => r.user_id).filter(uid => uid !== 'user_anon');
+
+    db.serialize(() => {
+      if (creators.length > 0) {
+        const placeholders = creators.map(() => '?').join(',');
+        db.run(`UPDATE USERS SET points = MAX(0, points - 20) WHERE username IN (${placeholders})`, creators);
+      }
+
+      // Mark associated notifications as resolved
+      db.run("UPDATE ADMIN_NOTIFICATIONS SET resolved = 1 WHERE cluster_id = ?", [cluster_id]);
+
+      db.run("DELETE FROM CLUSTERS WHERE id = ?", [cluster_id], function(err) {
+        if (err) return res.status(500).json({ success: false, error: err.message });
+        
+        res.json({
+          success: true,
+          message: `Cluster rejected as spam/useless. Deducted 20 points from contributors: @${creators.join(', @') || 'none'}`
+        });
+      });
+    });
+  });
+});
+
+// Get unresolved notifications
+app.get('/api/moderation/notifications', (req, res) => {
+  db.all("SELECT * FROM ADMIN_NOTIFICATIONS WHERE resolved = 0 ORDER BY created_at DESC", (err, rows) => {
+    if (err) return res.status(500).json({ success: false, error: err.message });
+    res.json(rows);
+  });
+});
+
+// Resolve a notification
+app.post('/api/moderation/notifications/:id/resolve', (req, res) => {
+  const { id } = req.params;
+  db.run("UPDATE ADMIN_NOTIFICATIONS SET resolved = 1 WHERE id = ?", [id], function(err) {
+    if (err) return res.status(500).json({ success: false, error: err.message });
+    res.json({ success: true, message: 'Notification resolved.' });
+  });
+});
+
 // Submit Question (Stage 1 & 2)
 app.post('/api/questions', async (req, res) => {
-  const { question_text, category, user_id, ai_model } = req.body;
+  const { question_text, category, user_id, ai_model, use_emergency } = req.body;
   if (!question_text || !category) {
     return res.status(400).json({ success: false, error: 'Question text and category are required.' });
   }
@@ -331,111 +727,172 @@ app.post('/api/questions', async (req, res) => {
   const userId = user_id || 'user_anon';
   const now = new Date().toISOString();
   const activeModel = ai_model || 'gemini-1.5-flash';
+  const isEmergency = use_emergency ? 1 : 0;
 
-  // Fetch active unanswered clusters for similarity match
-  db.all("SELECT id, representative_question FROM CLUSTERS WHERE status = 'unanswered'", async (err, clusters) => {
-    if (err) return res.status(500).json({ success: false, error: err.message });
+  const processQuestion = (hasEmergencyPermission) => {
+    db.all("SELECT id, representative_question FROM CLUSTERS WHERE status = 'unanswered'", async (err, clusters) => {
+      if (err) return res.status(500).json({ success: false, error: err.message });
 
-    let bestSimilarity = 0.0;
-    let bestClusterId = null;
+      let bestSimilarity = 0.0;
+      let bestClusterId = null;
 
-    clusters.forEach(c => {
-      const sim = calculateCosineSimilarity(question_text, c.representative_question);
-      if (sim > bestSimilarity) {
-        bestSimilarity = sim;
-        bestClusterId = c.id;
-      }
-    });
-
-    const questionId = 'q_' + Date.now() + Math.floor(Math.random() * 1000);
-
-    if (bestClusterId && bestSimilarity > 0.85) {
-      // Merge
-      db.run("INSERT INTO QUESTIONS (id, question_text, category, cluster_id, user_id, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-        [questionId, question_text, category, bestClusterId, userId, now],
-        function (err) {
-          if (err) return res.status(500).json({ success: false, error: err.message });
-          
-          // Trigger priority score updates
-          updatePriorityScores(() => {
-            res.status(200).json({
-              success: true,
-              message: 'Question received and merged into an existing cluster.',
-              cluster_id: bestClusterId,
-              is_new: false,
-              similarity: parseFloat(bestSimilarity.toFixed(3))
-            });
-          });
+      clusters.forEach(c => {
+        const sim = calculateCosineSimilarity(question_text, c.representative_question);
+        if (sim > bestSimilarity) {
+          bestSimilarity = sim;
+          bestClusterId = c.id;
         }
-      );
-    } else {
-      // Create new cluster
-      const clusterId = 'cluster_' + Date.now() + Math.floor(Math.random() * 100);
-      
-      try {
-        // Stage 4: Generate and link AI answer asynchronously
-        const aiDraft = await generateAIDraftAnswerAsync(question_text, category, activeModel);
-        
-        db.serialize(() => {
-          db.run("INSERT INTO CLUSTERS (id, representative_question, category, upvotes, priority_score, status, created_at) VALUES (?, ?, ?, 0, 0.5, 'unanswered', ?)",
-            [clusterId, question_text, category, now]);
-          
-          db.run("INSERT INTO QUESTIONS (id, question_text, category, cluster_id, user_id, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-            [questionId, question_text, category, clusterId, userId, now]);
+      });
 
-          db.run("INSERT INTO ANSWERS (id, cluster_id, answer_text, author_type, user_id, upvotes, created_at) VALUES (?, ?, ?, 'ai', NULL, 0, ?)",
-            ['ans_' + clusterId + '_ai', clusterId, aiDraft, now],
+      const questionId = 'q_' + Date.now() + Math.floor(Math.random() * 1000);
+
+      if (bestClusterId && bestSimilarity > 0.85) {
+        // Merge
+        db.serialize(() => {
+          if (isEmergency && hasEmergencyPermission) {
+            db.run("UPDATE CLUSTERS SET is_emergency = 1 WHERE id = ?", [bestClusterId]);
+            const notifId = 'notif_' + Date.now();
+            const msg = `🚨 Emergency Alert: User @${userId} has escalated a critical issue in '${category}': "${question_text}"`;
+            db.run("INSERT INTO ADMIN_NOTIFICATIONS (id, message, cluster_id, created_at, resolved) VALUES (?, ?, ?, ?, 0)",
+              [notifId, msg, bestClusterId, now]);
+          }
+
+          db.run("INSERT INTO QUESTIONS (id, question_text, category, cluster_id, user_id, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            [questionId, question_text, category, bestClusterId, userId, now],
             function (err) {
               if (err) return res.status(500).json({ success: false, error: err.message });
               
+              // Award points +5 for merge
+              if (userId !== 'user_anon') {
+                db.run("UPDATE USERS SET points = points + 5 WHERE username = ?", [userId]);
+              }
+
               updatePriorityScores(() => {
-                res.status(201).json({
+                res.status(200).json({
                   success: true,
-                  message: 'Question received. No similar questions found. Started new cluster.',
-                  cluster_id: clusterId,
-                  is_new: true,
+                  message: isEmergency && hasEmergencyPermission 
+                    ? 'Emergency question received & merged into existing cluster. Alerted Admin!'
+                    : 'Question received and merged into an existing cluster.',
+                  cluster_id: bestClusterId,
+                  is_new: false,
                   similarity: parseFloat(bestSimilarity.toFixed(3))
                 });
               });
             }
           );
         });
-      } catch (aiErr) {
-        console.error('[AI Draft Error] Failed in async flow:', aiErr);
-        // Fail-safe flow using synchronous fallback
-        const aiDraft = generateAIDraftAnswer(question_text, category);
-        db.serialize(() => {
-          db.run("INSERT INTO CLUSTERS (id, representative_question, category, upvotes, priority_score, status, created_at) VALUES (?, ?, ?, 0, 0.5, 'unanswered', ?)",
-            [clusterId, question_text, category, now]);
-          db.run("INSERT INTO QUESTIONS (id, question_text, category, cluster_id, user_id, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-            [questionId, question_text, category, clusterId, userId, now]);
-          db.run("INSERT INTO ANSWERS (id, cluster_id, answer_text, author_type, user_id, upvotes, created_at) VALUES (?, ?, ?, 'ai', NULL, 0, ?)",
-            ['ans_' + clusterId + '_ai', clusterId, aiDraft, now],
-            function (err) {
-              if (err) return res.status(500).json({ success: false, error: err.message });
-              updatePriorityScores(() => {
-                res.status(201).json({
-                  success: true,
-                  message: 'Question received. No similar questions found. Started new cluster (with template fallback).',
-                  cluster_id: clusterId,
-                  is_new: true,
-                  similarity: parseFloat(bestSimilarity.toFixed(3))
-                });
-              });
+      } else {
+        // Create new cluster
+        const clusterId = 'cluster_' + Date.now() + Math.floor(Math.random() * 100);
+        
+        try {
+          const aiDraft = await generateAIDraftAnswerAsync(question_text, category, activeModel);
+          
+          db.serialize(() => {
+            db.run("INSERT INTO CLUSTERS (id, representative_question, category, upvotes, priority_score, status, created_at, is_emergency) VALUES (?, ?, ?, 0, 0.5, 'unanswered', ?, ?)",
+              [clusterId, question_text, category, now, isEmergency && hasEmergencyPermission ? 1 : 0]);
+            
+            db.run("INSERT INTO QUESTIONS (id, question_text, category, cluster_id, user_id, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+              [questionId, question_text, category, clusterId, userId, now]);
+
+            if (isEmergency && hasEmergencyPermission) {
+              const notifId = 'notif_' + Date.now();
+              const msg = `🚨 Emergency Alert: User @${userId} has escalated a critical issue in '${category}': "${question_text}"`;
+              db.run("INSERT INTO ADMIN_NOTIFICATIONS (id, message, cluster_id, created_at, resolved) VALUES (?, ?, ?, ?, 0)",
+                [notifId, msg, clusterId, now]);
             }
-          );
-        });
+
+            db.run("INSERT INTO ANSWERS (id, cluster_id, answer_text, author_type, user_id, upvotes, created_at) VALUES (?, ?, ?, 'ai', NULL, 0, ?)",
+              ['ans_' + clusterId + '_ai', clusterId, aiDraft, now],
+              function (err) {
+                if (err) return res.status(500).json({ success: false, error: err.message });
+                
+                if (userId !== 'user_anon') {
+                  db.run("UPDATE USERS SET points = points + 10 WHERE username = ?", [userId]);
+                }
+
+                updatePriorityScores(() => {
+                  res.status(201).json({
+                    success: true,
+                    message: isEmergency && hasEmergencyPermission
+                      ? 'Emergency question received. Started new emergency cluster. Alerted Admin!'
+                      : 'Question received. No similar questions found. Started new cluster.',
+                    cluster_id: clusterId,
+                    is_new: true,
+                    similarity: parseFloat(bestSimilarity.toFixed(3))
+                  });
+                });
+              }
+            );
+          });
+        } catch (aiErr) {
+          console.error('[AI Draft Error] Failed in async flow:', aiErr);
+          const aiDraft = generateAIDraftAnswer(question_text, category);
+          db.serialize(() => {
+            db.run("INSERT INTO CLUSTERS (id, representative_question, category, upvotes, priority_score, status, created_at, is_emergency) VALUES (?, ?, ?, 0, 0.5, 'unanswered', ?, ?)",
+              [clusterId, question_text, category, now, isEmergency && hasEmergencyPermission ? 1 : 0]);
+            db.run("INSERT INTO QUESTIONS (id, question_text, category, cluster_id, user_id, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+              [questionId, question_text, category, clusterId, userId, now]);
+            
+            if (isEmergency && hasEmergencyPermission) {
+              const notifId = 'notif_' + Date.now();
+              const msg = `🚨 Emergency Alert: User @${userId} has escalated a critical issue in '${category}': "${question_text}"`;
+              db.run("INSERT INTO ADMIN_NOTIFICATIONS (id, message, cluster_id, created_at, resolved) VALUES (?, ?, ?, ?, 0)",
+                [notifId, msg, clusterId, now]);
+            }
+
+            db.run("INSERT INTO ANSWERS (id, cluster_id, answer_text, author_type, user_id, upvotes, created_at) VALUES (?, ?, ?, 'ai', NULL, 0, ?)",
+              ['ans_' + clusterId + '_ai', clusterId, aiDraft, now],
+              function (err) {
+                if (err) return res.status(500).json({ success: false, error: err.message });
+                
+                if (userId !== 'user_anon') {
+                  db.run("UPDATE USERS SET points = points + 10 WHERE username = ?", [userId]);
+                }
+
+                updatePriorityScores(() => {
+                  res.status(201).json({
+                    success: true,
+                    message: isEmergency && hasEmergencyPermission
+                      ? 'Emergency question received. Started new emergency cluster (with template fallback). Alerted Admin!'
+                      : 'Question received. No similar questions found. Started new cluster (with template fallback).',
+                    cluster_id: clusterId,
+                    is_new: true,
+                    similarity: parseFloat(bestSimilarity.toFixed(3))
+                  });
+                });
+              }
+            );
+          });
+        }
       }
-    }
-  });
+    });
+  };
+
+  // If emergency is flagged, check and deduct token first
+  if (isEmergency && userId !== 'user_anon') {
+    db.get("SELECT emergency_tokens FROM USERS WHERE username = ?", [userId], (err, row) => {
+      if (err) return res.status(500).json({ success: false, error: err.message });
+      if (!row || row.emergency_tokens <= 0) {
+        return res.status(400).json({ success: false, error: 'Insufficient Emergency Tokens (You have 0 remaining).' });
+      }
+
+      db.run("UPDATE USERS SET emergency_tokens = emergency_tokens - 1 WHERE username = ?", [userId], (err) => {
+        if (err) return res.status(500).json({ success: false, error: err.message });
+        processQuestion(true);
+      });
+    });
+  } else {
+    processQuestion(false);
+  }
 });
 
-// List active unanswered clusters (Stage 3)
+// List active unanswered clusters (Stage 3, with emergency sorting)
 app.get('/api/questions', (req, res) => {
   updatePriorityScores((err) => {
     if (err) return res.status(500).json({ success: false, error: err.message });
 
-    db.all("SELECT id, representative_question, category, upvotes, priority_score, created_at FROM CLUSTERS WHERE status = 'unanswered' ORDER BY priority_score DESC", (err, rows) => {
+    db.all("SELECT id, representative_question, category, upvotes, priority_score, created_at, is_emergency FROM CLUSTERS WHERE status = 'unanswered' ORDER BY is_emergency DESC, priority_score DESC", (err, rows) => {
       if (err) return res.status(500).json({ success: false, error: err.message });
       res.json(rows);
     });
@@ -460,6 +917,21 @@ app.post('/api/votes', (req, res) => {
       return res.status(500).json({ success: false, error: err.message });
     }
 
+    // Give points: Voter gets +1
+    if (user_id !== 'user_anon') {
+      db.run("UPDATE USERS SET points = points + 1 WHERE username = ?", [user_id]);
+    }
+
+    // Give points: Author of first question gets +5
+    db.all("SELECT user_id FROM QUESTIONS WHERE cluster_id = ? ORDER BY created_at ASC LIMIT 1", [cluster_id], (err, qRows) => {
+      if (!err && qRows.length > 0) {
+        const creatorId = qRows[0].user_id;
+        if (creatorId && creatorId !== 'user_anon' && creatorId !== user_id) {
+          db.run("UPDATE USERS SET points = points + 5 WHERE username = ?", [creatorId]);
+        }
+      }
+    });
+
     // Increment upvote count
     db.run("UPDATE CLUSTERS SET upvotes = upvotes + 1 WHERE id = ?", [cluster_id], () => {
       updatePriorityScores(() => {
@@ -480,11 +952,11 @@ app.post('/api/votes', (req, res) => {
 app.get('/api/moderation/unanswered', (req, res) => {
   updatePriorityScores(() => {
     db.all(`
-      SELECT c.id, c.representative_question, c.category, c.upvotes, c.priority_score, a.answer_text as ai_draft_answer
+      SELECT c.id, c.representative_question, c.category, c.upvotes, c.priority_score, c.is_emergency, a.answer_text as ai_draft_answer
       FROM CLUSTERS c
       LEFT JOIN ANSWERS a ON c.id = a.cluster_id AND a.author_type = 'ai'
       WHERE c.status = 'unanswered'
-      ORDER BY c.priority_score DESC
+      ORDER BY c.is_emergency DESC, c.priority_score DESC
     `, (err, rows) => {
       if (err) return res.status(500).json({ success: false, error: err.message });
       res.json(rows);
@@ -494,7 +966,7 @@ app.get('/api/moderation/unanswered', (req, res) => {
 
 // Approve answer & Publish (Stage 5 & 6)
 app.post('/api/moderation/approve', (req, res) => {
-  const { cluster_id, approved_answer } = req.body;
+  const { cluster_id, approved_answer, answer_id } = req.body;
   if (!cluster_id || !approved_answer) {
     return res.status(400).json({ success: false, error: 'Cluster ID and approved answer are required.' });
   }
@@ -513,8 +985,37 @@ app.post('/api/moderation/approve', (req, res) => {
       db.run("INSERT INTO PUBLISHED_FAQ (id, cluster_id, question, answer, category, published_at) VALUES (?, ?, ?, ?, ?, ?)",
         [faqId, cluster_id, cluster.representative_question, approved_answer, cluster.category, now]);
       
-      // 2. Mark cluster as answered
-      db.run("UPDATE CLUSTERS SET status = 'answered' WHERE id = ?", [cluster_id], function(err) {
+      // 2. Resolve admin alerts
+      db.run("UPDATE ADMIN_NOTIFICATIONS SET resolved = 1 WHERE cluster_id = ?", [cluster_id]);
+
+      // 3. Award points to the question creator (+30 points)
+      db.all("SELECT user_id FROM QUESTIONS WHERE cluster_id = ? ORDER BY created_at ASC LIMIT 1", [cluster_id], (err, qRows) => {
+        if (!err && qRows.length > 0) {
+          const creatorId = qRows[0].user_id;
+          if (creatorId && creatorId !== 'user_anon') {
+            db.run("UPDATE USERS SET points = points + 30 WHERE username = ?", [creatorId]);
+          }
+        }
+      });
+
+      // 4. Award points to answer author if it is a community answer (+100 points)
+      if (answer_id) {
+        db.get("SELECT user_id, author_type FROM ANSWERS WHERE id = ?", [answer_id], (err, ansRow) => {
+          if (!err && ansRow && ansRow.author_type === 'user' && ansRow.user_id && ansRow.user_id !== 'user_anon') {
+            db.run("UPDATE USERS SET points = points + 100 WHERE username = ?", [ansRow.user_id]);
+          }
+        });
+      } else {
+        // Fallback: check if the text matches a community answer in the database
+        db.get("SELECT user_id, author_type FROM ANSWERS WHERE cluster_id = ? AND answer_text = ? AND author_type = 'user'", [cluster_id, approved_answer], (err, ansRow) => {
+          if (!err && ansRow && ansRow.user_id && ansRow.user_id !== 'user_anon') {
+            db.run("UPDATE USERS SET points = points + 100 WHERE username = ?", [ansRow.user_id]);
+          }
+        });
+      }
+
+      // 5. Mark cluster as answered
+      db.run("UPDATE CLUSTERS SET status = 'answered', emergency_resolved = 1 WHERE id = ?", [cluster_id], function(err) {
         if (err) return res.status(500).json({ success: false, error: err.message });
         
         res.json({
@@ -586,6 +1087,35 @@ app.post('/api/chat', (req, res) => {
         answer: "I couldn't find a verified answer matching your question in our FAQ database. Would you like to submit this question to our community prioritizing queue?"
       });
     }
+  });
+});
+
+// Debug route: trigger manual database failover
+app.post('/api/debug/db-fail', (req, res) => {
+  if (db.isBackupActive) {
+    return res.status(400).json({ success: false, error: 'Database failover has already occurred. Active database is now database_backup.sqlite.' });
+  }
+  
+  db.forceFailover((err) => {
+    if (err) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+    res.json({
+      success: true,
+      message: 'Successfully triggered database failover. Active database is now database_backup.sqlite.',
+      active_database: db.currentPath
+    });
+  });
+});
+
+// Debug route: get active database status
+app.get('/api/debug/db-status', (req, res) => {
+  res.json({
+    success: true,
+    is_backup_active: db.isBackupActive,
+    active_database: db.currentPath,
+    primary_database: db.primaryPath,
+    backup_database: db.backupPath
   });
 });
 

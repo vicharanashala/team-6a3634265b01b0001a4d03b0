@@ -78,21 +78,57 @@ const generateAIDraftAnswer = (questionText, category, customPrompt = '') => {
 };
 
 // Isolated CurationCard Component to respect React's Rules of Hooks
-function CurationCard({ cluster, communityAnswers, onPublish }) {
+function CurationCard({ cluster, communityAnswers, onPublish, onReject, isConnected, highlightedCluster }) {
   const [editedAns, setEditedAns] = useState(cluster.ai_draft_answer || '');
-  const commAnswers = communityAnswers[cluster.id] || [];
+  const [localCommAnswers, setLocalCommAnswers] = useState([]);
 
   useEffect(() => {
     setEditedAns(cluster.ai_draft_answer || '');
-  }, [cluster]);
+    
+    if (isConnected) {
+      // Fetch answers from backend
+      fetch(`http://localhost:5000/api/clusters/${cluster.id}/answers`)
+        .then(res => res.json())
+        .then(data => {
+          // Filter to only user-submitted answers
+          const userAns = data.filter(a => a.author_type === 'user').map(a => ({
+            id: a.id,
+            author: a.user_id,
+            text: a.answer_text,
+            upvotes: a.upvotes,
+            downvotes: a.downvotes
+          }));
+          setLocalCommAnswers(userAns);
+        })
+        .catch(err => console.error("Error fetching community answers:", err));
+    } else {
+      setLocalCommAnswers(communityAnswers[cluster.id] || []);
+    }
+  }, [cluster, communityAnswers, isConnected]);
+
+  const commAnswers = localCommAnswers;
+
+  const handlePublishClick = () => {
+    const matchedAns = commAnswers.find(ca => ca.text.trim() === editedAns.trim());
+    onPublish(cluster.id, editedAns, matchedAns ? matchedAns.id : null);
+  };
+
+  const isHighlighted = highlightedCluster === cluster.id;
 
   return (
-    <div className="glass rounded-xl p-5 border border-white/5 flex flex-col gap-4 shadow-md">
+    <div className={`glass rounded-xl p-5 flex flex-col gap-4 shadow-md transition-all duration-500 ${isHighlighted ? 'border-red-500 bg-red-950/20 shadow-red-500/10 scale-[1.01]' : 'border-white/5'}`}>
       <div className="flex justify-between items-start">
         <div>
-          <span className="bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider">
-            {cluster.category}
-          </span>
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider">
+              {cluster.category}
+            </span>
+            {cluster.is_emergency === 1 && (
+              <span className="bg-red-500/20 text-red-400 border border-red-500/30 px-2 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wider animate-pulse flex items-center gap-1">
+                🚨 Emergency Escalation
+              </span>
+            )}
+          </div>
           <h4 className="text-sm font-bold text-white mt-2">
             {cluster.representative_question}
           </h4>
@@ -142,7 +178,13 @@ function CurationCard({ cluster, communityAnswers, onPublish }) {
 
       <div className="flex justify-end gap-3 border-t border-white/5 pt-3">
         <button 
-          onClick={() => onPublish(cluster.id, editedAns)}
+          onClick={() => onReject(cluster.id)}
+          className="bg-red-950/40 border border-red-500/20 hover:bg-red-900/20 text-red-400 text-xs font-outfit font-semibold px-4 py-2 rounded-lg flex items-center gap-1.5 transition-colors"
+        >
+          <Trash2 className="w-3.5 h-3.5" /> Reject as Useless (-20 pts)
+        </button>
+        <button 
+          onClick={handlePublishClick}
           className="bg-green-600 hover:bg-green-500 text-white text-xs font-outfit font-semibold px-4 py-2 rounded-lg flex items-center gap-1.5 transition-colors shadow-lg shadow-green-600/10"
         >
           <Check className="w-3.5 h-3.5" /> Approve & Publish FAQ
@@ -233,6 +275,18 @@ export default function App() {
 
   // Global Alert State
   const [alert, setAlert] = useState({ show: false, text: '', type: 'info' });
+
+  // Advanced feature additions state hooks
+  const [useEmergency, setUseEmergency] = useState(false);
+  const [adminNotifications, setAdminNotifications] = useState([]);
+  const [activeClusterAnswers, setActiveClusterAnswers] = useState([]);
+  const [highlightedCluster, setHighlightedCluster] = useState(null);
+  const [dbStatus, setDbStatus] = useState({
+    is_backup_active: false,
+    active_database: 'database.sqlite',
+    primary_database: 'database.sqlite',
+    backup_database: 'database_backup.sqlite'
+  });
 
   // Default seed database constants for backup/reset
   const defaultClusters = [
@@ -327,6 +381,22 @@ export default function App() {
     chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [chatMessages, isChatTyping]);
 
+  // Fetch community answers for expanded cluster
+  useEffect(() => {
+    if (expandedCluster && isConnected) {
+      fetch(`http://localhost:5000/api/clusters/${expandedCluster}/answers`)
+        .then(res => res.json())
+        .then(data => {
+          setActiveClusterAnswers(data);
+        })
+        .catch(err => console.error("Error fetching cluster answers:", err));
+    } else {
+      setActiveClusterAnswers([]);
+    }
+  }, [expandedCluster, isConnected]);
+
+  const [leaderboard, setLeaderboard] = useState([]);
+
   const checkApiConnection = async () => {
     try {
       const res = await fetch(`http://localhost:5000/api/faq`);
@@ -335,6 +405,12 @@ export default function App() {
         triggerAlert("Connected to live Express backend API server.", "success");
         fetchLiveFaqs();
         fetchLiveQuestions();
+        fetchLeaderboard();
+        fetchAdminNotifications();
+        fetchDbStatus();
+        if (currentUser) {
+          syncUserSession(currentUser.username);
+        }
       } else {
         throw new Error();
       }
@@ -342,6 +418,96 @@ export default function App() {
       setIsConnected(false);
       triggerAlert("Live API Offline. Running in High-Fidelity Simulation Mode.", "info");
     }
+  };
+
+  const fetchLeaderboard = async () => {
+    try {
+      const res = await fetch('http://localhost:5000/api/users');
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        setLeaderboard(data);
+        setContributors(data.map(u => ({
+          name: `@${u.username}`,
+          count: u.points, // display points directly as main count
+          votes: u.emergency_tokens,
+          role: u.role,
+          badge: u.badge,
+          color: u.color,
+          points: u.points,
+          emergency_tokens: u.emergency_tokens
+        })));
+      }
+    } catch {}
+  };
+
+  const fetchAdminNotifications = async () => {
+    try {
+      const res = await fetch('http://localhost:5000/api/moderation/notifications');
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        setAdminNotifications(data);
+      }
+    } catch {}
+  };
+
+  const fetchDbStatus = async () => {
+    try {
+      const res = await fetch('http://localhost:5000/api/debug/db-status');
+      const data = await res.json();
+      if (data.success) {
+        setDbStatus(data);
+      }
+    } catch {}
+  };
+
+  const handleTriggerDbFailover = async () => {
+    try {
+      const res = await fetch('http://localhost:5000/api/debug/db-fail', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        triggerAlert(data.message, "success");
+        logActivity("SYSTEM", "Triggered manual database failover to database_backup.sqlite");
+        fetchDbStatus();
+      } else {
+        triggerAlert(data.error, "error");
+      }
+    } catch {
+      triggerAlert("Failover request failed.", "error");
+    }
+  };
+
+  const handleResolveNotification = async (id) => {
+    if (isConnected) {
+      try {
+        const res = await fetch(`http://localhost:5000/api/moderation/notifications/${id}/resolve`, {
+          method: 'POST'
+        });
+        const data = await res.json();
+        if (data.success) {
+          triggerAlert("Emergency notification resolved.", "success");
+          fetchAdminNotifications();
+        }
+      } catch {}
+    } else {
+      setAdminNotifications(prev => prev.filter(n => n.id !== id));
+      triggerAlert("Emergency notification resolved (Simulated).", "success");
+    }
+  };
+
+  const syncUserSession = async (username) => {
+    if (!username) return;
+    try {
+      const res = await fetch('http://localhost:5000/api/users/auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setCurrentUser(data.user);
+        fetchLeaderboard();
+      }
+    } catch {}
   };
 
   const fetchLiveFaqs = async () => {
@@ -451,13 +617,16 @@ export default function App() {
         const res = await fetch('http://localhost:5000/api/questions', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ question_text: questionText, category: cat, user_id: uid, ai_model: aiEngine })
+          body: JSON.stringify({ question_text: questionText, category: cat, user_id: uid, ai_model: aiEngine, use_emergency: useEmergency })
         });
         const data = await res.json();
         if (data.success) {
           triggerAlert(data.message, 'success');
           setNewQuestion('');
+          setUseEmergency(false);
           fetchLiveQuestions();
+          syncUserSession(uid);
+          fetchAdminNotifications();
           setUserTab('submit-vote');
         } else {
           triggerAlert(data.error, 'error');
@@ -467,8 +636,35 @@ export default function App() {
       }
     } else {
       // High-Fidelity Local Simulation Mode (Stage 2 similarity checking)
+      if (useEmergency && currentUser.emergency_tokens <= 0) {
+        triggerAlert("Insufficient Emergency Tokens (You have 0 remaining).", "error");
+        return;
+      }
+
       let bestSimilarity = liveMatch.sim;
       let bestCluster = liveMatch.cluster;
+      const isEmergency = useEmergency ? 1 : 0;
+
+      if (isEmergency) {
+        // Decrement local user token
+        setCurrentUser(prev => ({
+          ...prev,
+          emergency_tokens: prev.emergency_tokens - 1
+        }));
+        
+        // Log in notification list for mock admin alerts
+        const notifId = 'notif_' + Date.now();
+        const msg = `🚨 Emergency Alert: User @${uid} has escalated a critical issue in '${cat}': "${questionText}"`;
+        const newNotif = {
+          id: notifId,
+          message: msg,
+          cluster_id: bestCluster ? bestCluster.id : `c_${Date.now()}`,
+          created_at: new Date().toISOString(),
+          resolved: 0
+        };
+        setAdminNotifications(prev => [newNotif, ...prev]);
+        logActivity("SYSTEM", `Emergency escalation triggered by @${uid} for "${questionText.substring(0, 30)}..."`);
+      }
 
       if (bestCluster && bestSimilarity > similarityThreshold) {
         // Merge into cluster
@@ -476,14 +672,19 @@ export default function App() {
           if (c.id === bestCluster.id) {
             return {
               ...c,
-              upvotes: c.upvotes + 1
+              upvotes: c.upvotes + 1,
+              is_emergency: isEmergency ? 1 : (c.is_emergency || 0)
             };
           }
           return c;
         });
         setClusters(updated);
+        
+        // Give voter +5 points if merged
+        setCurrentUser(prev => ({ ...prev, points: prev.points + 5 }));
+        
         logActivity("DEDUPLICATION", `Matched question "${questionText.substring(0, 30)}..." to cluster [${bestCluster.id}] (Sim: ${bestSimilarity.toFixed(2)} > Threshold: ${similarityThreshold}). Merged.`);
-        triggerAlert(`Question matched cluster '${bestCluster.id}' (Similarity: ${bestSimilarity.toFixed(2)}). Automatically merged.`, 'success');
+        triggerAlert(isEmergency ? `Emergency question merged. Alerted Admin!` : `Question matched cluster '${bestCluster.id}' (Similarity: ${bestSimilarity.toFixed(2)}). Automatically merged.`, 'success');
       } else {
         // Start a new cluster
         const newId = `c_${Date.now()}`;
@@ -496,14 +697,18 @@ export default function App() {
           created_at: new Date().toISOString(),
           status: 'unanswered',
           ai_draft_answer: autoDraft ? generateAIDraftAnswer(questionText, cat, promptTemplate) : "AI Generation disabled in configuration.",
-          views: 1
+          views: 1,
+          is_emergency: isEmergency
         };
         setClusters(prev => [newClust, ...prev]);
+
+        // Give user +10 points for new cluster
+        setCurrentUser(prev => ({ ...prev, points: prev.points + 10 }));
 
         // Increment user contribution metrics
         setContributors(prev => prev.map(u => {
           if (u.name === `@${currentUser.username}`) {
-            return { ...u, count: u.count + 1 };
+            return { ...u, count: (u.count || 0) + 1, points: (u.points || 100) + 10 };
           }
           return u;
         }));
@@ -512,9 +717,10 @@ export default function App() {
         if (autoDraft) {
           logActivity("AI_DRAFT", `Drafted response for cluster [${newId}] using engine: [${aiEngine}] and customized Prompt guidelines.`);
         }
-        triggerAlert("No similar questions found. Started new cluster & generated AI draft.", "success");
+        triggerAlert(isEmergency ? "Emergency cluster started. Alerted Admin!" : "No similar questions found. Started new cluster & generated AI draft.", "success");
       }
       setNewQuestion('');
+      setUseEmergency(false);
       setUserTab('submit-vote');
     }
   };
@@ -541,6 +747,7 @@ export default function App() {
         if (data.success) {
           triggerAlert("Upvote registered.", "success");
           fetchLiveQuestions();
+          syncUserSession(currentUser.username);
         } else {
           triggerAlert(data.error, "error");
         }
@@ -562,21 +769,22 @@ export default function App() {
       });
       setClusters(updated);
 
-      // Increment user vote metrics
+      // Increment user vote metrics and voter points
+      setCurrentUser(prev => ({ ...prev, points: prev.points + 1 }));
       setContributors(prev => prev.map(u => {
         if (u.name === `@${currentUser.username}`) {
-          return { ...u, votes: u.votes + 1 };
+          return { ...u, votes: (u.votes || 0) + 1, points: (u.points || 100) + 1 };
         }
         return u;
       }));
 
       logActivity("VOTE", `Upvoted cluster [${clusterId}]. Recalculated Priority Score with decay [${decayWeight}]`);
-      triggerAlert("Upvote registered. Recalculated Priority Score.", "success");
+      triggerAlert("Upvote registered. Recalculated Priority Score. Earned 1 point!", "success");
     }
   };
 
   // Submit community answer draft to cluster
-  const handleAddCommunityAnswer = (e, clusterId) => {
+  const handleAddCommunityAnswer = async (e, clusterId) => {
     e.preventDefault();
     if (!currentUser) {
       triggerAlert("Authentication required. Please Login or Signup to contribute answer drafts.", "error");
@@ -585,58 +793,154 @@ export default function App() {
     }
     if (!newCommunityAnsText.trim()) return;
 
-    const answerId = `ca_${Date.now()}`;
-    const newAns = {
-      id: answerId,
-      author: currentUser.username,
-      text: newCommunityAnsText.trim(),
-      upvotes: 0,
-      downvotes: 0
-    };
+    const ansText = newCommunityAnsText.trim();
+    const username = currentUser.username;
 
-    setCommunityAnswers(prev => ({
-      ...prev,
-      [clusterId]: [...(prev[clusterId] || []), newAns]
-    }));
-    setNewCommunityAnsText('');
-    logActivity("COMMUNITY_ANSWER", `Submitted answer contribution [${answerId}] to question cluster [${clusterId}]`);
-    triggerAlert("Answer draft shared with the moderators.", "success");
+    if (isConnected) {
+      try {
+        const res = await fetch(`http://localhost:5000/api/clusters/${clusterId}/answers`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ answer_text: ansText, user_id: username })
+        });
+        const data = await res.json();
+        if (data.success) {
+          triggerAlert(data.message, "success");
+          setNewCommunityAnsText('');
+          syncUserSession(username);
+          fetchLiveQuestions();
+          
+          // Refresh answers for expanded thread if connected
+          if (expandedCluster === clusterId) {
+            const ansRes = await fetch(`http://localhost:5000/api/clusters/${clusterId}/answers`);
+            const ansData = await ansRes.json();
+            setActiveClusterAnswers(ansData);
+          }
+        } else {
+          triggerAlert(data.error, "error");
+        }
+      } catch {
+        triggerAlert("Failed to submit community answer draft.", "error");
+      }
+    } else {
+      // Local Mock
+      const answerId = `ca_${Date.now()}`;
+      const newAns = {
+        id: answerId,
+        author: username,
+        text: ansText,
+        upvotes: 0,
+        downvotes: 0
+      };
+
+      setCommunityAnswers(prev => ({
+        ...prev,
+        [clusterId]: [...(prev[clusterId] || []), newAns]
+      }));
+      
+      // Award user +10 points locally
+      setCurrentUser(prev => ({ ...prev, points: prev.points + 10 }));
+      setContributors(prev => prev.map(u => {
+        if (u.name === `@${username}`) {
+          return { ...u, points: (u.points || 100) + 10 };
+        }
+        return u;
+      }));
+
+      setNewCommunityAnsText('');
+      logActivity("COMMUNITY_ANSWER", `Submitted answer contribution [${answerId}] to question cluster [${clusterId}]`);
+      triggerAlert("Answer draft shared with the moderators. Earned 10 points!", "success");
+    }
   };
 
   // Upvote community answer draft
-  const handleUpvoteCommunityAnswer = (clusterId, answerId) => {
-    const list = communityAnswers[clusterId] || [];
-    const updated = list.map(a => {
-      if (a.id === answerId) {
-        return { ...a, upvotes: a.upvotes + 1 };
-      }
-      return a;
-    });
-    setCommunityAnswers(prev => ({
-      ...prev,
-      [clusterId]: updated
-    }));
-    logActivity("VOTE", `Upvoted community answer [${answerId}] inside cluster [${clusterId}]`);
+  const handleUpvoteCommunityAnswer = async (clusterId, answerId) => {
+    if (!currentUser) {
+      triggerAlert("Authentication required. Please Login or Signup to upvote answers.", "error");
+      setAuthModal(true);
+      return;
+    }
+
+    if (isConnected) {
+      try {
+        const res = await fetch(`http://localhost:5000/api/answers/${answerId}/vote`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type: 'upvote', user_id: currentUser.username })
+        });
+        const data = await res.json();
+        if (data.success) {
+          const ansRes = await fetch(`http://localhost:5000/api/clusters/${clusterId}/answers`);
+          const ansData = await ansRes.json();
+          setActiveClusterAnswers(ansData);
+          syncUserSession(currentUser.username);
+        }
+      } catch {}
+    } else {
+      // Local Mock
+      const list = communityAnswers[clusterId] || [];
+      const updated = list.map(a => {
+        if (a.id === answerId) {
+          setContributors(prev => prev.map(u => {
+            if (u.name === `@${a.author}`) {
+              return { ...u, points: (u.points || 100) + 2 };
+            }
+            return u;
+          }));
+          return { ...a, upvotes: a.upvotes + 1 };
+        }
+        return a;
+      });
+      setCommunityAnswers(prev => ({
+        ...prev,
+        [clusterId]: updated
+      }));
+      setCurrentUser(prev => ({ ...prev, points: prev.points + 1 }));
+      logActivity("VOTE", `Upvoted community answer [${answerId}] inside cluster [${clusterId}]`);
+    }
   };
 
   // Downvote community answer draft
-  const handleDownvoteCommunityAnswer = (clusterId, answerId) => {
-    const list = communityAnswers[clusterId] || [];
-    const updated = list.map(a => {
-      if (a.id === answerId) {
-        return { ...a, downvotes: a.downvotes + 1 };
-      }
-      return a;
-    });
-    setCommunityAnswers(prev => ({
-      ...prev,
-      [clusterId]: updated
-    }));
-    logActivity("VOTE", `Downvoted community answer [${answerId}] inside cluster [${clusterId}]`);
+  const handleDownvoteCommunityAnswer = async (clusterId, answerId) => {
+    if (!currentUser) {
+      triggerAlert("Authentication required. Please Login or Signup to downvote answers.", "error");
+      setAuthModal(true);
+      return;
+    }
+
+    if (isConnected) {
+      try {
+        const res = await fetch(`http://localhost:5000/api/answers/${answerId}/vote`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type: 'downvote', user_id: currentUser.username })
+        });
+        const data = await res.json();
+        if (data.success) {
+          const ansRes = await fetch(`http://localhost:5000/api/clusters/${clusterId}/answers`);
+          const ansData = await ansRes.json();
+          setActiveClusterAnswers(ansData);
+        }
+      } catch {}
+    } else {
+      // Local Mock
+      const list = communityAnswers[clusterId] || [];
+      const updated = list.map(a => {
+        if (a.id === answerId) {
+          return { ...a, downvotes: a.downvotes + 1 };
+        }
+        return a;
+      });
+      setCommunityAnswers(prev => ({
+        ...prev,
+        [clusterId]: updated
+      }));
+      logActivity("VOTE", `Downvoted community answer [${answerId}] inside cluster [${clusterId}]`);
+    }
   };
 
-  // Admin Publish/Approve Handler (can approve AI draft OR select one of the community answers!)
-  const handleApprovePublish = async (clusterId, finalAnswer) => {
+  // Admin Publish/Approve Handler
+  const handleApprovePublish = async (clusterId, finalAnswer, answerId) => {
     if (!finalAnswer.trim()) {
       triggerAlert("Answer cannot be empty.", "error");
       return;
@@ -647,13 +951,17 @@ export default function App() {
         const res = await fetch('http://localhost:5000/api/moderation/approve', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ cluster_id: clusterId, approved_answer: finalAnswer })
+          body: JSON.stringify({ cluster_id: clusterId, approved_answer: finalAnswer, answer_id: answerId })
         });
         const data = await res.json();
         if (data.success) {
           triggerAlert("FAQ Published successfully.", "success");
           fetchLiveQuestions();
           fetchLiveFaqs();
+          fetchAdminNotifications();
+          if (currentUser) {
+            syncUserSession(currentUser.username);
+          }
         } else {
           triggerAlert(data.error, "error");
         }
@@ -673,59 +981,155 @@ export default function App() {
         };
         setFaqs(prev => [newFaq, ...prev]);
         setClusters(prev => prev.filter(c => c.id !== clusterId));
+
+        // Award points locally for publishing
+        if (currentUser) {
+          setCurrentUser(prev => ({ ...prev, points: prev.points + 30 }));
+        }
+
+        // If a community answer was used, find author and reward +100 points
+        if (answerId) {
+          const list = communityAnswers[clusterId] || [];
+          const matched = list.find(a => a.id === answerId);
+          if (matched) {
+            setContributors(prev => prev.map(u => {
+              if (u.name === `@${matched.author}`) {
+                return { ...u, points: (u.points || 100) + 100 };
+              }
+              return u;
+            }));
+            if (currentUser && currentUser.username === matched.author) {
+              setCurrentUser(prev => ({ ...prev, points: prev.points + 100 }));
+            }
+          }
+        }
+
+        setAdminNotifications(prev => prev.filter(n => n.cluster_id !== clusterId));
+
         logActivity("PUBLISH", `Published cluster [${clusterId}] to public FAQ repository.`);
         triggerAlert("Answer approved! Published to public Knowledge Base.", "success");
       }
     }
   };
 
+  const handleRejectUseless = async (clusterId) => {
+    if (isConnected) {
+      try {
+        const res = await fetch('http://localhost:5000/api/moderation/flag-useless', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ cluster_id: clusterId })
+        });
+        const data = await res.json();
+        if (data.success) {
+          triggerAlert(data.message, "success");
+          fetchLiveQuestions();
+          fetchLeaderboard();
+          fetchAdminNotifications();
+        } else {
+          triggerAlert(data.error, "error");
+        }
+      } catch {
+        triggerAlert("Reject request failed.", "error");
+      }
+    } else {
+      // Local Mock implementation (deducts 20 points from currentUser, cleans queue)
+      setClusters(prev => prev.filter(c => c.id !== clusterId));
+      setAdminNotifications(prev => prev.filter(n => n.cluster_id !== clusterId));
+      if (currentUser) {
+        setCurrentUser(prev => ({ ...prev, points: Math.max(0, prev.points - 20) }));
+      }
+      logActivity("MODERATION", `Rejected cluster [${clusterId}] as spam/useless. Deducted 20 points from the creator.`);
+      triggerAlert("Cluster rejected as spam/useless. Deducted 20 points.", "success");
+    }
+  };
+
   // User auth registration/login execution
-  const handleAuthSubmit = (e) => {
+  const handleAuthSubmit = async (e) => {
     e.preventDefault();
     if (!authUsername.trim() || !authPassword.trim()) {
       setAuthError("All credentials are required.");
       return;
     }
 
-    if (authMode === 'login') {
-      const name = authUsername.toLowerCase();
-      const existing = contributors.find(c => c.name.toLowerCase() === `@${name}`);
-      const userObj = {
-        username: authUsername,
-        email: `${authUsername}@crowdfaq.com`,
-        bio: existing ? existing.role : 'FAQ Explorer',
-        badge: existing ? existing.badge : 'Scribe',
-        color: existing ? existing.color : 'text-blue-400'
-      };
-      setCurrentUser(userObj);
-      logActivity("SECURITY", `User logged in: @${authUsername}`);
-      triggerAlert(`Welcome back, @${authUsername}!`, "success");
-    } else {
-      const newUser = {
-        name: `@${authUsername}`,
-        count: 0,
-        votes: 0,
-        role: authBio || "Community Scholar",
-        badge: "Scholar",
-        color: "text-indigo-400"
-      };
-      setContributors(prev => [...prev, newUser]);
-      setCurrentUser({
-        username: authUsername,
-        email: authEmail || `${authUsername}@crowdfaq.com`,
-        bio: authBio || 'Community Scholar',
-        badge: 'Scholar',
-        color: 'text-indigo-400'
-      });
-      logActivity("SECURITY", `New account registered for user: @${authUsername}`);
-      triggerAlert(`Account created successfully! Welcome, @${authUsername}!`, "success");
-    }
+    const username = authUsername.replace(/\s+/g, '').toLowerCase();
 
-    setAuthModal(false);
-    setAuthUsername('');
-    setAuthEmail('');
-    setAuthPassword('');
-    setAuthError('');
+    if (isConnected) {
+      try {
+        const res = await fetch('http://localhost:5000/api/users/auth', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username,
+            email: authEmail || `${username}@crowdfaq.com`,
+            role: authBio || 'Community Member',
+            badge: authMode === 'login' ? 'Scholar' : 'New Contributor',
+            color: 'text-indigo-400'
+          })
+        });
+        const data = await res.json();
+        if (data.success) {
+          setCurrentUser(data.user);
+          fetchLeaderboard();
+          logActivity("SECURITY", `User authenticated via API: @${username}`);
+          triggerAlert(`Authenticated successfully! Welcome, @${username}!`, "success");
+          setAuthModal(false);
+          setAuthUsername('');
+          setAuthEmail('');
+          setAuthPassword('');
+          setAuthError('');
+        } else {
+          setAuthError(data.error || 'Authentication failed.');
+        }
+      } catch {
+        setAuthError('Error connecting to authentication API.');
+      }
+    } else {
+      // Local Simulation Mode
+      if (authMode === 'login') {
+        const existing = contributors.find(c => c.name.toLowerCase() === `@${username}`);
+        const userObj = {
+          username,
+          email: `${username}@crowdfaq.com`,
+          bio: existing ? existing.role : 'FAQ Explorer',
+          badge: existing ? existing.badge : 'Scribe',
+          color: existing ? existing.color : 'text-blue-400',
+          points: existing ? (existing.points || 100) : 100,
+          emergency_tokens: existing ? (existing.emergency_tokens || 3) : 3
+        };
+        setCurrentUser(userObj);
+        logActivity("SECURITY", `User logged in (Simulated): @${username}`);
+        triggerAlert(`Welcome back, @${username}!`, "success");
+      } else {
+        const newUserObj = {
+          username,
+          email: authEmail || `${username}@crowdfaq.com`,
+          bio: authBio || 'Community Scholar',
+          badge: 'Scholar',
+          color: 'text-indigo-400',
+          points: 100,
+          emergency_tokens: 3
+        };
+        setContributors(prev => [...prev, {
+          name: `@${username}`,
+          count: 100, // starting points
+          votes: 3, // emergency tokens
+          role: authBio || "Community Scholar",
+          badge: "Scholar",
+          color: "text-indigo-400",
+          points: 100,
+          emergency_tokens: 3
+        }]);
+        setCurrentUser(newUserObj);
+        logActivity("SECURITY", `New account registered (Simulated): @${username}`);
+        triggerAlert(`Account created successfully! Welcome, @${username}!`, "success");
+      }
+      setAuthModal(false);
+      setAuthUsername('');
+      setAuthEmail('');
+      setAuthPassword('');
+      setAuthError('');
+    }
   };
 
   // Perform full authentication logout
@@ -953,17 +1357,21 @@ export default function App() {
 
           {/* Persistent User Authentication Widget */}
           {currentUser ? (
-            <div className="flex items-center gap-3 bg-dark-950/80 px-3 py-1 rounded-xl border border-white/5 shadow-inner text-xs">
+            <div className="flex items-center gap-3 bg-dark-950/80 px-3 py-1.5 rounded-xl border border-white/5 shadow-inner text-xs">
               <div className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 border border-white/10 font-bold bg-dark-900 ${currentUser.color}`}>
                 {currentUser.username[0].toUpperCase()}
               </div>
               <div className="text-left leading-tight">
                 <span className="font-semibold block text-white">@{currentUser.username}</span>
-                <span className="text-[9px] text-gray-500 font-mono block truncate max-w-[80px]">{currentUser.bio}</span>
+                <span className="text-[9px] text-gray-400 font-mono block truncate max-w-[80px]">{currentUser.bio}</span>
+                <div className="flex items-center gap-2 mt-0.5 text-[9px] font-bold text-gray-500">
+                  <span className="text-amber-400">🪙 {currentUser.points || 0} pts</span>
+                  <span className="text-red-400">🚨 {currentUser.emergency_tokens || 0} tkns</span>
+                </div>
               </div>
               <button 
                 onClick={handleLogout}
-                className="text-red-400 hover:text-red-300 hover:bg-red-500/10 p-1.5 rounded-lg ml-1 font-bold flex items-center gap-1 transition-all animate-pulse"
+                className="text-red-400 hover:text-red-300 hover:bg-red-500/10 p-1.5 rounded-lg ml-1 font-bold flex items-center gap-1 transition-all"
                 title="Logout Portal Sessions"
               >
                 <LogOut className="w-3.5 h-3.5" />
@@ -1426,6 +1834,21 @@ export default function App() {
                         />
                       </div>
 
+                      {currentUser && currentUser.emergency_tokens > 0 && (
+                        <div className="flex items-center gap-2 bg-red-950/20 border border-red-500/20 p-3 rounded-xl">
+                          <input 
+                            type="checkbox" 
+                            id="useEmergency"
+                            checked={useEmergency}
+                            onChange={e => setUseEmergency(e.target.checked)}
+                            className="w-3.5 h-3.5 text-red-600 border-red-500/30 rounded focus:ring-red-500 bg-dark-900"
+                          />
+                          <label htmlFor="useEmergency" className="text-xs text-red-400 font-semibold cursor-pointer select-none">
+                            🚨 Escalate as Critical Issue (Uses 1 Emergency Token, remaining: {currentUser.emergency_tokens})
+                          </label>
+                        </div>
+                      )}
+
                       <button 
                         type="submit" 
                         className="w-full bg-blue-600 hover:bg-blue-500 text-white font-outfit font-semibold py-2.5 px-4 rounded-xl transition-all duration-200 shadow-lg shadow-blue-500/20 flex items-center justify-center gap-2 text-xs"
@@ -1520,7 +1943,15 @@ export default function App() {
                     ) : (
                       clusters.filter(c => c.status === 'unanswered' && followedTags.includes(c.category)).map(c => {
                         const isExpanded = expandedCluster === c.id;
-                        const commAnsList = communityAnswers[c.id] || [];
+                        const commAnsList = isConnected 
+                          ? activeClusterAnswers.filter(a => a.author_type === 'user').map(a => ({
+                              id: a.id,
+                              author: a.user_id,
+                              text: a.answer_text,
+                              upvotes: a.upvotes,
+                              downvotes: a.downvotes
+                            }))
+                          : (communityAnswers[c.id] || []);
 
                         return (
                           <div 
@@ -1531,10 +1962,17 @@ export default function App() {
                           >
                             <div className="flex flex-col gap-2">
                               <div className="flex justify-between items-start">
-                                <span className="bg-blue-500/10 text-blue-400 border border-blue-500/20 px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider">
-                                  {c.category}
-                                </span>
-                                <div className="flex items-center gap-1.5 text-xs text-gray-400 font-medium">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="bg-blue-500/10 text-blue-400 border border-blue-500/20 px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider">
+                                    {c.category}
+                                  </span>
+                                  {c.is_emergency === 1 && (
+                                    <span className="bg-red-500/20 text-red-400 border border-red-500/30 px-2 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wider animate-pulse flex items-center gap-1">
+                                      🚨 Emergency
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="flex items-center gap-1.5 text-xs text-gray-400 font-medium font-mono">
                                   <Tag className="w-3.5 h-3.5 text-blue-500" />
                                   Priority: <strong className="text-blue-500 font-extrabold">{c.priority_score?.toFixed(2)}</strong>
                                 </div>
@@ -1734,8 +2172,8 @@ export default function App() {
                     <div className="flex flex-col gap-3 mt-2">
                       <div className="grid grid-cols-5 text-[9px] uppercase tracking-wider text-gray-500 font-extrabold border-b border-white/5 pb-2 font-mono">
                         <span className="col-span-2">Contributor Member</span>
-                        <span className="text-center">Contributions</span>
-                        <span className="text-center">Total Votes</span>
+                        <span className="text-center">Points</span>
+                        <span className="text-center">Emergency Tokens</span>
                         <span className="text-right">Badges</span>
                       </div>
 
@@ -1748,10 +2186,10 @@ export default function App() {
                               <span className="text-[9px] text-gray-500 block font-mono">{item.role}</span>
                             </div>
                           </div>
-                          <span className="text-center text-gray-300 font-mono font-semibold">{item.count}</span>
-                          <span className="text-center text-gray-300 font-mono font-semibold">{item.votes}</span>
-                          <div className="text-right">
-                            <span className={`text-[9px] font-bold border border-white/10 px-2 py-0.5 rounded-full ${item.color} bg-white/5 font-mono`}>
+                          <span className="text-center text-gray-300 font-mono font-semibold">{item.points !== undefined ? item.points : item.count}</span>
+                          <span className="text-center text-gray-300 font-mono font-semibold">{item.emergency_tokens !== undefined ? item.emergency_tokens : item.votes}</span>
+                          <div className="text-right font-mono">
+                            <span className={`text-[9px] font-bold border border-white/10 px-2 py-0.5 rounded-full ${item.color} bg-white/5`}>
                               {item.badge}
                             </span>
                           </div>
@@ -2077,38 +2515,16 @@ export default function App() {
                     <Users className="w-6 h-6 text-emerald-400 animate-pulse" />
                     <div>
                       <h3 className="text-md font-bold font-outfit text-white">Project Engineering Team</h3>
-                      <p className="text-xs text-emerald-300 font-medium">United members driving collaborative pipeline engineering</p>
+                      <p className="text-xs text-emerald-300 font-medium">Lead Developer & Architect</p>
                     </div>
                   </div>
 
                   <p className="text-xs text-emerald-200 leading-relaxed font-medium">
-                    Our engineering group is composed of dedicated technical contributors working collaboratively across full-stack application development, database management, AI/NLP vector pipelines, UI design, prompt tuning, and quality assurance. In order to drive the project successfully, we operate as a unified dev group:
+                    The design, coding, testing, and deployment of this Crowd-Sourced FAQ Generation & Management System is driven by:
                   </p>
 
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-2 font-mono">
-                    {[
-                      "Ganeshprabu BO",
-                      "Mohd Warish",
-                      "Tejeswara Reddy",
-                      "Chaitanya Ram S",
-                      "Ritzy Elsa George",
-                      "Vineelkrishna K",
-                      "Nekha Mariya Paul",
-                      "Harshith Sai Suraj",
-                      "Pursharth Kaushal",
-                      "Abhishek Kumar",
-                      "Aryan Gaur",
-                      "Lohit Kumar Pureti"
-                    ].map((name, index) => (
-                      <div key={index} className="bg-dark-950/60 border border-white/5 px-4 py-2.5 rounded-lg flex items-center gap-2">
-                        <Shield className="w-3.5 h-3.5 text-emerald-400 shrink-0 animate-pulse" />
-                        <span className="text-xs font-semibold text-white">{name}</span>
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="bg-dark-900/60 p-3 rounded-lg border border-emerald-500/10 mt-2 text-[10px] text-emerald-300 font-mono text-center select-none leading-relaxed">
-                    ★ Unified engineering team contributing collectively toward enterprise crowd-sourced knowledge platforms. ★
+                  <div className="bg-dark-900/60 p-4 rounded-lg border border-emerald-500/10 mt-2 text-xs text-emerald-300 font-mono text-center select-none leading-relaxed">
+                    ★ Ganeshprabu BO ★
                   </div>
                 </div>
 
@@ -2152,37 +2568,82 @@ export default function App() {
               </div>
             ) : (
               // Unlocked Admin Dashboards
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 animate-float">
+              <div className="flex flex-col gap-6 w-full animate-float">
                 
-                {/* Left side: Moderation Curation Queue & AI Prompt Engineering Playground */}
-                <div className="lg:col-span-2 flex flex-col gap-6">
-                  
-                  {/* Pipeline Curation Dashboard using modular components */}
-                  <div className="flex flex-col gap-5">
-                    <div>
-                      <h2 className="text-xl font-bold font-outfit text-white">Expert Curation Dashboard</h2>
-                      <p className="text-xs text-gray-400 mt-1">Review active clusters. Choose to publish either the AI Generative Draft or select one of the community-submitted answers.</p>
+                {/* Emergency Alerts Banner */}
+                {adminNotifications.filter(n => n.resolved === 0).length > 0 && (
+                  <div className="bg-red-950/30 border border-red-500/30 rounded-2xl p-4 flex flex-col gap-3 shadow-lg shadow-red-500/5 animate-pulse">
+                    <div className="flex items-center gap-2 text-red-400 font-bold font-outfit text-sm">
+                      <ShieldAlert className="w-5 h-5 text-red-500" />
+                      <span>Active Emergency Escalation Requests ({adminNotifications.filter(n => n.resolved === 0).length})</span>
                     </div>
-
-                    <div className="flex flex-col gap-5">
-                      {clusters.filter(c => c.status === 'unanswered').length === 0 ? (
-                        <div className="text-center text-gray-500 py-16 bg-dark-900/25 rounded-2xl border border-white/5">
-                          <Check className="w-12 h-12 text-green-500 mx-auto mb-3" />
-                          <p className="text-sm font-semibold">Moderation pipeline is empty.</p>
-                          <p className="text-xs text-gray-600 mt-1">All community questions are happily answered and published!</p>
+                    <div className="flex flex-col gap-2">
+                      {adminNotifications.filter(n => n.resolved === 0).map(notif => (
+                        <div 
+                          key={notif.id}
+                          className="bg-dark-950/60 border border-red-500/10 p-3 rounded-xl flex items-center justify-between text-xs transition-all hover:bg-red-950/20 cursor-pointer"
+                          onClick={() => {
+                            setHighlightedCluster(notif.cluster_id);
+                            const el = document.getElementById(`curation-card-${notif.cluster_id}`);
+                            if (el) {
+                              el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            }
+                            triggerAlert("Highlighted escalated cluster in curation queue.", "info");
+                          }}
+                        >
+                          <div className="flex items-center gap-2">
+                            <span className="text-red-400 font-extrabold uppercase font-mono tracking-wider text-[9px] bg-red-500/15 px-2 py-0.5 rounded border border-red-500/20 shrink-0">CRITICAL</span>
+                            <span className="text-gray-200 font-medium">{notif.message}</span>
+                          </div>
+                          <div className="flex items-center gap-3 shrink-0 ml-4" onClick={e => e.stopPropagation()}>
+                            <button
+                              onClick={() => handleResolveNotification(notif.id)}
+                              className="bg-green-600/20 border border-green-500/30 hover:bg-green-600 hover:text-white text-green-400 text-[10px] font-bold px-2.5 py-1 rounded transition-colors"
+                            >
+                              Resolve Alert
+                            </button>
+                          </div>
                         </div>
-                      ) : (
-                        clusters.filter(c => c.status === 'unanswered').map(c => (
-                          <CurationCard 
-                            key={c.id}
-                            cluster={c}
-                            communityAnswers={communityAnswers}
-                            onPublish={handleApprovePublish}
-                          />
-                        ))
-                      )}
+                      ))}
                     </div>
                   </div>
+                )}
+
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                  
+                  {/* Left side: Moderation Curation Queue & AI Prompt Engineering Playground */}
+                  <div className="lg:col-span-2 flex flex-col gap-6">
+                    
+                    {/* Pipeline Curation Dashboard using modular components */}
+                    <div className="flex flex-col gap-5">
+                      <div>
+                        <h2 className="text-xl font-bold font-outfit text-white">Expert Curation Dashboard</h2>
+                        <p className="text-xs text-gray-400 mt-1">Review active clusters. Choose to publish either the AI Generative Draft or select one of the community-submitted answers.</p>
+                      </div>
+
+                      <div className="flex flex-col gap-5">
+                        {clusters.filter(c => c.status === 'unanswered').length === 0 ? (
+                          <div className="text-center text-gray-500 py-16 bg-dark-900/25 rounded-2xl border border-white/5">
+                            <Check className="w-12 h-12 text-green-500 mx-auto mb-3" />
+                            <p className="text-sm font-semibold">Moderation pipeline is empty.</p>
+                            <p className="text-xs text-gray-600 mt-1">All community questions are happily answered and published!</p>
+                          </div>
+                        ) : (
+                          clusters.filter(c => c.status === 'unanswered').map(c => (
+                            <div id={`curation-card-${c.id}`} key={c.id}>
+                              <CurationCard 
+                                cluster={c}
+                                communityAnswers={communityAnswers}
+                                onPublish={handleApprovePublish}
+                                onReject={handleRejectUseless}
+                                isConnected={isConnected}
+                                highlightedCluster={highlightedCluster}
+                              />
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
 
                   {/* AI Prompt Engineering Playground Dashboard */}
                   <div className="glass rounded-xl p-6 border border-indigo-500/10 bg-indigo-500/5 flex flex-col gap-4">
@@ -2273,6 +2734,49 @@ export default function App() {
                           <span>SYNC REPOSITORY ORIGIN:</span>
                           <span className="text-blue-400 truncate w-[100px] text-right">github/prabu411</span>
                         </div>
+                      </div>
+
+                      {/* Database Resiliency Status */}
+                      <div className="flex flex-col gap-2 mt-2 bg-dark-950/80 p-3 rounded-lg border border-white/5 text-[10px] leading-normal text-gray-400">
+                        <span className="text-[9px] font-extrabold uppercase tracking-wider text-indigo-400 flex items-center gap-1">
+                          <Database className="w-3.5 h-3.5 text-indigo-400" />
+                          Multi-DB Resiliency Status
+                        </span>
+                        <div className="flex justify-between items-center mt-1">
+                          <span>Active Database:</span>
+                          <span className={`font-mono text-[9px] font-bold ${dbStatus.is_backup_active ? 'text-amber-400 animate-pulse' : 'text-green-400'}`}>
+                            {dbStatus.is_backup_active ? 'Backup SQLite (Failover)' : 'Primary SQLite'}
+                          </span>
+                        </div>
+                        <div className="flex justify-between items-center text-[9px] text-gray-500 font-mono mt-0.5">
+                          <span>Database File:</span>
+                          <span className="truncate max-w-[120px]" title={dbStatus.active_database}>{dbStatus.active_database.split(/[\\/]/).pop()}</span>
+                        </div>
+                        {isConnected && !dbStatus.is_backup_active && (
+                          <button
+                            onClick={handleTriggerDbFailover}
+                            className="w-full bg-amber-600/10 border border-amber-500/20 hover:bg-amber-600 hover:text-white text-amber-400 font-bold py-1 px-2.5 rounded text-[9px] mt-2 transition-colors flex items-center justify-center gap-1.5"
+                          >
+                            <RefreshCw className="w-3 h-3 animate-spin" /> Simulate Primary DB Failover
+                          </button>
+                        )}
+                        {!isConnected && (
+                          <button
+                            onClick={() => {
+                              setDbStatus(prev => ({
+                                ...prev,
+                                is_backup_active: true,
+                                active_database: prev.backup_database
+                              }));
+                              logActivity("SYSTEM", "Simulated database failover to backup database file locally.");
+                              triggerAlert("Local simulation database failover triggered successfully.", "success");
+                            }}
+                            disabled={dbStatus.is_backup_active}
+                            className="w-full disabled:opacity-50 bg-amber-600/10 border border-amber-500/20 hover:bg-amber-600 hover:text-white text-amber-400 font-bold py-1 px-2.5 rounded text-[9px] mt-2 transition-colors flex items-center justify-center gap-1.5"
+                          >
+                            <RefreshCw className="w-3 h-3" /> Simulate Local DB Failover
+                          </button>
+                        )}
                       </div>
 
                     </div>
@@ -2513,13 +3017,12 @@ export default function App() {
                   </div>
 
                 </div>
-
               </div>
-            )}
-          </section>
-        )}
-
-      </main>
+            </div>
+          )}
+        </section>
+      )}
+    </main>
 
       {/* Footer Accents */}
       <footer className="w-full text-center py-6 border-t border-white/5 text-[10px] text-gray-600 mt-auto">

@@ -177,24 +177,32 @@ Follow the interactive CLI prompts to seed questions, observe similarity merges,
 
 ---
 
-## 👥 Unified Project Engineering Team
+## ⚙️ Advanced Features
 
-The design, coding, testing, and deployment of the **Crowd-Sourced FAQ Generation & Management System** is driven by our project engineering team. Operating as a unified development group, the members collaborate collectively across full-stack architecture, Node.js databases, Python NLP embeddings, vector algorithms, UI design, prompt engineering, and quality assurance:
+The **Crowd-Sourced FAQ Generation & Management System** is equipped with several advanced enterprise-grade features:
 
-*   **Ganeshprabu BO**
-*   **Mohd Warish**
-*   **Tejeswara Reddy**
-*   **Chaitanya Ram S**
-*   **Ritzy Elsa George**
-*   **Vineelkrishna K**
-*   **Nekha Mariya Paul**
-*   **Harshith Sai Suraj**
-*   **Pursharth Kaushal**
-*   **Abhishek Kumar**
-*   **Aryan Gaur**
-*   **Lohit Kumar Pureti**
+### 1. Automated SQLite Failover & Backup Handling
+To ensure high availability, the backend employs a multi-database fallback strategy. If a read/write operation on the primary database (`database.sqlite`) encounters errors (e.g., file corruption, I/O limits, or locking), the system automatically redirects incoming queries to a hot-backup database (`database_backup.sqlite`). 
+*   **Failover Lifecycle**: The `FailoverDatabase` wrapper handles retry logic transparently, ensuring zero-downtime transition. The frontend displays the active database in the diagnostics view.
 
-*Unified dev team contributing collectively toward enterprise crowd-sourced knowledge management platforms.*
+### 2. Points & Gamification Curation System
+To motivate high-quality crowd-sourced contributions, users accumulate engagement points based on their behavior:
+*   **Submitting a question**: `+10` points
+*   **Merging duplicate questions**: `+5` points
+*   **Upvoting a question/cluster**: `+1` point to the voter, `+5` points to the author of the question
+*   **Moderator approves community answer**: `+100` points to the contributor
+*   **Spam Penalty**: If a moderator marks a question/cluster as "useless" or spam, the system deletes it and applies a `-20` points deduction from the author's balance.
+
+### 3. Emergency Tokens & Immediate Admin Notifications
+When resolving critical issues, users can spend **Emergency Tokens** (each user starts with `3` tokens) to submit a priority request:
+*   **Escalated Priority**: Using a token flags the question as an emergency. The priority scoring instantly shifts to the top of the queue.
+*   **Admin Notification**: A real-time notification alert triggers in the Admin Control Tower immediately, allowing moderators to act without delay.
+
+### 4. Community Answers & Peer Publishing
+Any authenticated user can submit draft answers directly to unanswered questions:
+*   **Peer Curation**: Community drafts can be upvoted or downvoted by others.
+*   **Expert Approval**: The moderator reviews all community drafts side-by-side with AI drafts, edits the best response, and publishes it, rewarding the writer.
 
 ---
-*Developed under PM & Architecture directions of Ganeshprabu BO (Team Lead).*
+*Developed as an enterprise crowd-sourced knowledge management platform.*
+
