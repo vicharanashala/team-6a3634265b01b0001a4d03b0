@@ -1,5 +1,5 @@
 
-# 🌟 Crowd-Sourced FAQ Generation & Management System
+# 🌟 Crowd-Sourced FAQ Generation & Management System(Ganeshprabu & Team)
 > An enterprise-grade, collaborative knowledge pipeline that harnesses collective community feedback to automatically deduplicate, prioritize, draft, and curate high-quality Frequently Asked Questions (FAQs).
 
 ---
