@@ -204,6 +204,30 @@ Any authenticated user can submit draft answers directly to unanswered questions
 *   **Peer Curation**: Community drafts can be upvoted or downvoted by others.
 *   **Expert Approval**: The moderator reviews all community drafts side-by-side with AI drafts, edits the best response, and publishes it, rewarding the writer.
 
+Future Enhancements
+The following enhancements are proposed to further improve collaboration, knowledge sharing, and community engagement within the platform.
+
+Community Driven Knowledge Sharing
+When no suitable FAQ is found, community members can contribute answers to the query. The question author can mark an accepted answer, after which moderators may review and refine it before adding it to the official FAQ section.
+
+Category Based Expert Routing
+Questions can be automatically classified into predefined categories such as Rules, ViBe, Samagama, Projects, Zoom etc. Each category is assigned authorized volunteers or subject matter experts, ensuring that queries are routed to the appropriate reviewers for faster and more accurate resolution.
+
+Separate Issue Reporting
+The platform can provide a dedicated issue reporting module separate from the FAQ system. Users may attach screenshots or supporting media while reporting issues, allowing volunteers and administrators to track issue status from Open to Resolved and respond more efficiently.
+
+Reputation and Recognition
+A reputation mechanism can reward users for asking meaningful questions and providing accepted answers. Contributors earn karma points, unlock badges and higher reputation levels, and gain community recognition, encouraging long term participation and high quality contributions.
+
+Personalized FAQ Collections
+Users can bookmark useful FAQs.
+
+Automated Question Escalation
+Queries that remain unanswered beyond a configurable time threshold can be automatically escalated to subject matter experts or moderators, ensuring that important questions receive timely attention.
+
+FAQ Quality Feedback
+Users can provide feedback on published FAQs through helpful or not helpful ratings. This feedback can help moderators identify outdated or low quality responses, enabling continuous improvement of the FAQ section.
+
 ---
 *Developed as an enterprise crowd-sourced knowledge management platform.*
 Team Lead-Ganeshprabu BO
